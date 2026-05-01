@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>API Network Recorder</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>API Network Recorder</h1>
+        <p>Local request/response capture</p>
+      </header>
+
+      <section class="actions">
+        <button id="openApp">Open inspector</button>
+        <button id="startDeep">Start deep capture</button>
+        <button id="stopDeep">Stop deep capture</button>
+        <button id="clear">Clear</button>
+      </section>
+
+      <section id="summary">Loading...</section>
+    </main>
+
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
