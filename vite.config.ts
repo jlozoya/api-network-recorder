@@ -2,9 +2,13 @@ import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node
 import { dirname, resolve } from "node:path"
 import { defineConfig } from "vite"
 
-import { manifest } from "./manifest.config.js"
+import { manifest as chromeManifest } from "./manifest.chrome.config.js"
+import { manifest as firefoxManifest } from "./manifest.firefox.config.js"
 
 const outDir = "dist"
+
+const browserTarget = process.env.BROWSER_TARGET === "firefox" ? "firefox" : "chrome"
+const manifest = browserTarget === "firefox" ? firefoxManifest : chromeManifest
 
 const ensureDir = (path: string): void => {
   mkdirSync(path, { recursive: true })
@@ -46,6 +50,10 @@ const normalizeHtmlOutputs = (): void => {
 }
 
 export default defineConfig({
+  define: {
+    __BROWSER_TARGET__: JSON.stringify(browserTarget),
+    __SUPPORTS_DEEP_CAPTURE__: JSON.stringify(browserTarget === "chrome"),
+  },
   build: {
     outDir,
     emptyOutDir: true,
@@ -66,7 +74,7 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: "build-chrome-extension-files",
+      name: "build-browser-extension-files",
       closeBundle() {
         ensureDir(resolve(outDir))
         writeManifest()

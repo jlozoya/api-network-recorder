@@ -5,10 +5,13 @@ import {
   isProbablyApiRecord,
 } from "../core/endpoint-utils.js"
 import { recordToCurl } from "../core/export-curl.js"
-import type { ExtensionMessage, ExtensionResponse } from "../core/message-types.js"
 import type { CapturedBody, NetworkRecord } from "../core/network-types.js"
+import { resetDb } from "../storage/db.js"
+import { clearNetworkRecords, listNetworkRecords } from "../storage/network-record-repository.js"
 
 import "./app.css"
+
+const AUTO_REFRESH_INTERVAL_MS = 2_000
 
 const app = document.querySelector("#app")
 
@@ -62,20 +65,6 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: str
       window.clearTimeout(timeoutId)
     }
   }
-}
-
-const sendMessage = async <T>(message: ExtensionMessage): Promise<T> => {
-  const response = (await withTimeout(
-    chrome.runtime.sendMessage(message) as Promise<ExtensionResponse<T>>,
-    8000,
-    message.type,
-  )) as ExtensionResponse<T>
-
-  if (!response.ok) {
-    throw new Error(response.error)
-  }
-
-  return response.data
 }
 
 const escapeHtml = (value: string): string =>
@@ -171,10 +160,23 @@ const copyText = async (value: string): Promise<void> => {
   await navigator.clipboard.writeText(value)
 }
 
-const refreshRecords = async (): Promise<void> => {
-  state.records = await sendMessage<NetworkRecord[]>({
-    type: "GET_RECORDS",
-    payload: {
+const getRecordFingerprint = (records: NetworkRecord[]): string => {
+  return records.map((record) => `${record.id}:${record.completedAt}`).join("|")
+}
+
+const isEditingFilters = (): boolean => {
+  const activeElement = document.activeElement
+
+  return (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLSelectElement ||
+    activeElement instanceof HTMLTextAreaElement
+  )
+}
+
+const refreshRecords = async (): Promise<NetworkRecord[]> => {
+  return await withTimeout(
+    listNetworkRecords({
       limit: 2000,
       search: state.search,
       method: state.method,
@@ -182,8 +184,10 @@ const refreshRecords = async (): Promise<void> => {
       source: state.source,
       host: state.host,
       apiOnly: state.apiOnly,
-    },
-  })
+    }),
+    7000,
+    "IndexedDB read",
+  )
 }
 
 const renderLoading = (): void => {
@@ -202,13 +206,28 @@ const renderError = (message: string): void => {
       <p>${escapeHtml(message)}</p>
       <div class="fatalActions">
         <button id="retryLoad" type="button">Retry</button>
+        <button id="resetLocalDb" type="button" class="danger">Reset local DB</button>
       </div>
       <pre>${escapeHtml(message)}</pre>
     </section>
   `
 
   document.querySelector("#retryLoad")?.addEventListener("click", () => {
-    void reload()
+    void reload({ silent: false })
+  })
+
+  document.querySelector("#resetLocalDb")?.addEventListener("click", async () => {
+    try {
+      await resetDb()
+      state.records = []
+      state.selectedRecordId = null
+      state.selectedEndpointKey = null
+      state.error = null
+      await reload({ silent: false })
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error)
+      render()
+    }
   })
 }
 
@@ -252,6 +271,7 @@ const renderFilters = (): string => {
       <select id="source">
         ${[
           ["all", "All sources"],
+          ["web-request", "webRequest"],
           ["fetch", "fetch"],
           ["xhr", "xhr"],
           ["debugger", "debugger"],
@@ -493,13 +513,24 @@ const render = (): void => {
   bindEvents()
 }
 
-const reload = async (): Promise<void> => {
+const reload = async (options?: { silent?: boolean }): Promise<void> => {
   try {
-    state.loading = true
-    state.error = null
-    render()
+    const previousFingerprint = getRecordFingerprint(state.records)
 
-    await refreshRecords()
+    if (!options?.silent) {
+      state.loading = true
+      state.error = null
+      render()
+    }
+
+    const nextRecords = await refreshRecords()
+    const nextFingerprint = getRecordFingerprint(nextRecords)
+
+    if (options?.silent && previousFingerprint === nextFingerprint) {
+      return
+    }
+
+    state.records = nextRecords
 
     if (
       state.selectedRecordId &&
@@ -518,27 +549,41 @@ const reload = async (): Promise<void> => {
     }
 
     state.loading = false
+    state.error = null
     render()
   } catch (error) {
+    if (options?.silent) {
+      console.warn("[API Network Recorder] Silent refresh failed.", error)
+      return
+    }
+
     state.loading = false
     state.error = error instanceof Error ? error.message : String(error)
     render()
   }
 }
 
+const scheduleAutoRefresh = (): void => {
+  window.setInterval(() => {
+    if (document.hidden || state.loading || state.error || isEditingFilters()) {
+      return
+    }
+
+    void reload({ silent: true })
+  }, AUTO_REFRESH_INTERVAL_MS)
+}
+
 const bindEvents = (): void => {
   document.querySelector("#refresh")?.addEventListener("click", () => {
-    void reload()
+    void reload({ silent: false })
   })
 
   document.querySelector("#clear")?.addEventListener("click", async () => {
-    await sendMessage<null>({
-      type: "CLEAR_RECORDS",
-    })
+    await clearNetworkRecords()
 
     state.selectedRecordId = null
     state.selectedEndpointKey = null
-    await reload()
+    await reload({ silent: false })
   })
 
   document.querySelector("#exportJson")?.addEventListener("click", () => {
@@ -574,12 +619,12 @@ const bindEvents = (): void => {
 
   document.querySelector("#search")?.addEventListener("input", (event) => {
     state.search = event.target instanceof HTMLInputElement ? event.target.value : ""
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelector("#method")?.addEventListener("change", (event) => {
     state.method = event.target instanceof HTMLSelectElement ? event.target.value : "ALL"
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelector("#statusGroup")?.addEventListener("change", (event) => {
@@ -587,23 +632,23 @@ const bindEvents = (): void => {
       event.target instanceof HTMLSelectElement
         ? (event.target.value as AppState["statusGroup"])
         : "all"
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelector("#source")?.addEventListener("change", (event) => {
     state.source =
       event.target instanceof HTMLSelectElement ? (event.target.value as AppState["source"]) : "all"
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelector("#host")?.addEventListener("change", (event) => {
     state.host = event.target instanceof HTMLSelectElement ? event.target.value : ""
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelector("#apiOnly")?.addEventListener("change", (event) => {
     state.apiOnly = event.target instanceof HTMLInputElement ? event.target.checked : true
-    void reload()
+    void reload({ silent: true })
   })
 
   document.querySelectorAll<HTMLElement>(".record[data-id]").forEach((item) => {
@@ -655,4 +700,6 @@ const bindEvents = (): void => {
   })
 }
 
-void reload()
+void reload({ silent: false }).then(() => {
+  scheduleAutoRefresh()
+})
