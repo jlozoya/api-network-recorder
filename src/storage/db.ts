@@ -2,6 +2,9 @@ import { openDB, type DBSchema } from "idb"
 
 import type { NetworkRecord } from "../core/network-types.js"
 
+const DATABASE_NAME = "api-network-recorder-v2"
+const DATABASE_VERSION = 1
+
 interface ApiRecorderDb extends DBSchema {
   networkRecords: {
     key: string
@@ -17,8 +20,12 @@ interface ApiRecorderDb extends DBSchema {
 }
 
 export const getDb = () => {
-  return openDB<ApiRecorderDb>("api-network-recorder", 1, {
+  return openDB<ApiRecorderDb>(DATABASE_NAME, DATABASE_VERSION, {
     upgrade(db) {
+      if (db.objectStoreNames.contains("networkRecords")) {
+        return
+      }
+
       const store = db.createObjectStore("networkRecords", {
         keyPath: "id",
       })
@@ -29,5 +36,30 @@ export const getDb = () => {
       store.createIndex("by-status", "status")
       store.createIndex("by-tabId", "tabId")
     },
+    blocked() {
+      console.warn(
+        "[API Network Recorder] IndexedDB open is blocked. Close old inspector tabs and reload the extension.",
+      )
+    },
+    blocking() {
+      console.warn(
+        "[API Network Recorder] This IndexedDB connection is blocking another tab. Close old inspector tabs.",
+      )
+    },
+    terminated() {
+      console.warn("[API Network Recorder] IndexedDB connection was terminated.")
+    },
+  })
+}
+
+export const resetDb = async (): Promise<void> => {
+  const deleteRequest = indexedDB.deleteDatabase(DATABASE_NAME)
+
+  await new Promise<void>((resolve, reject) => {
+    deleteRequest.onsuccess = () => resolve()
+    deleteRequest.onerror = () => reject(deleteRequest.error ?? new Error("Unable to delete DB"))
+    deleteRequest.onblocked = () => {
+      reject(new Error("Database reset is blocked. Close old inspector tabs and retry."))
+    }
   })
 }

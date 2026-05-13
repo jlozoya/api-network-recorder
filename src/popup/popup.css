@@ -1,5 +1,9 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
-  width: 360px;
+  width: 400px;
   margin: 0;
   font-family:
     Inter,
@@ -16,9 +20,17 @@ main {
   padding: 16px;
 }
 
+header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
 h1 {
   margin: 0;
   font-size: 18px;
+  line-height: 1.2;
 }
 
 p {
@@ -26,8 +38,64 @@ p {
   color: #94a3b8;
 }
 
+.badge {
+  flex: 0 0 auto;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #cbd5e1;
+  background: #1e293b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.badge[data-active="true"] {
+  border-color: #14532d;
+  color: #bbf7d0;
+  background: #052e16;
+}
+
+.settings,
+.deepCapture {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 12px;
+  background: #020617;
+}
+
+.settings label,
+.deepCapture strong {
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings select {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #e5e7eb;
+  background: #1e293b;
+}
+
+.settings p,
+.deepCapture p {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.deepCaptureActions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
 .actions {
   display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin: 16px 0;
 }
@@ -41,11 +109,52 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background: #334155;
 }
 
-#summary {
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button[data-active="true"] {
+  border-color: #7f1d1d;
+  color: #fecaca;
+  background: #450a0a;
+}
+
+button[data-active="true"]:hover:not(:disabled) {
+  background: #7f1d1d;
+}
+
+button.danger {
+  border-color: #7f1d1d;
+  color: #fecaca;
+  background: #450a0a;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #7f1d1d;
+}
+
+.summary {
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 10px;
   color: #cbd5e1;
+  background: #020617;
   font-size: 13px;
+  line-height: 1.4;
+}
+
+.error {
+  margin-top: 10px;
+  border: 1px solid #7f1d1d;
+  border-radius: 10px;
+  padding: 10px;
+  color: #fecaca;
+  background: #450a0a;
+  font-size: 13px;
+  line-height: 1.4;
 }

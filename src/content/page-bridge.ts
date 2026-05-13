@@ -1,62 +1,29 @@
-const MAX_INJECTION_ATTEMPTS = 50
-const INJECTION_RETRY_DELAY_MS = 10
+import type { ExtensionMessage } from "../core/message-types.js"
 
-const getInjectionTarget = (): HTMLElement | null => {
-  return document.documentElement || document.head || document.body
-}
+const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
 
-const injectScriptElement = (): boolean => {
-  const target = getInjectionTarget()
-
-  if (!target) {
-    return false
+window.addEventListener("message", (event: MessageEvent) => {
+  if (event.source !== window) {
+    return
   }
 
-  const existingScript = document.querySelector<HTMLScriptElement>(
-    'script[data-api-network-recorder="injected"]',
-  )
-
-  if (existingScript) {
-    return true
+  const data = event.data as {
+    source?: string
+    message?: ExtensionMessage
   }
 
-  const script = document.createElement("script")
-
-  script.src = chrome.runtime.getURL("assets/injected.js")
-  script.async = false
-  script.dataset.apiNetworkRecorder = "injected"
-
-  script.onload = () => {
-    script.remove()
+  if (data.source !== EXTENSION_SOURCE) {
+    return
   }
 
-  script.onerror = () => {
-    script.remove()
-    console.warn("[API Network Recorder] Failed to inject page script.")
+  if (!data.message) {
+    return
   }
 
-  target.prepend(script)
-
-  return true
-}
-
-export const injectPageScript = (): void => {
-  let attempts = 0
-
-  const tryInject = (): void => {
-    attempts += 1
-
-    if (injectScriptElement()) {
-      return
-    }
-
-    if (attempts >= MAX_INJECTION_ATTEMPTS) {
-      console.warn("[API Network Recorder] Could not find a document node for script injection.")
-      return
-    }
-
-    window.setTimeout(tryInject, INJECTION_RETRY_DELAY_MS)
-  }
-
-  tryInject()
-}
+  chrome.runtime.sendMessage(data.message).catch((error: unknown) => {
+    console.warn(
+      "[API Network Recorder] Failed to send message to background service worker.",
+      error,
+    )
+  })
+})

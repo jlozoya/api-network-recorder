@@ -1,4 +1,4 @@
-export type CaptureSource = "fetch" | "xhr" | "debugger"
+export type CaptureSource = "fetch" | "xhr" | "debugger" | "web-request"
 
 export type HeaderMap = Record<string, string>
 
@@ -36,6 +36,7 @@ export interface NetworkRecord {
     protocol?: string
     fromDiskCache?: boolean
     encodedDataLength?: number
+    normalizedEndpoint?: string
   }
 }
 

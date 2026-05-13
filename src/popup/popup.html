@@ -8,18 +8,47 @@
   <body>
     <main>
       <header>
-        <h1>API Network Recorder</h1>
-        <p>Local request/response capture</p>
+        <div>
+          <h1>API Network Recorder</h1>
+          <p>Silent capture is always on</p>
+        </div>
+        <span id="captureBadge" class="badge">Checking</span>
       </header>
 
-      <section class="actions">
-        <button id="openApp">Open inspector</button>
-        <button id="startDeep">Start deep capture</button>
-        <button id="stopDeep">Stop deep capture</button>
-        <button id="clear">Clear</button>
+      <section class="settings">
+        <label for="captureLimit">Stored records</label>
+        <select id="captureLimit">
+          <option value="50">Last 50</option>
+          <option value="100">Last 100</option>
+          <option value="150">Last 150</option>
+          <option value="250">Last 250</option>
+          <option value="500">Last 500</option>
+          <option value="1000">Last 1000</option>
+        </select>
+        <p>Older records are deleted automatically.</p>
       </section>
 
-      <section id="summary">Loading...</section>
+      <section class="deepCapture">
+        <div>
+          <strong>Deep capture</strong>
+          <p>
+            Optional. Uses Chrome debugger and can capture response bodies. Chrome will
+            show a debugger banner while enabled.
+          </p>
+        </div>
+
+        <div class="deepCaptureActions">
+          <button id="toggleDeepCapture" type="button">Checking...</button>
+        </div>
+      </section>
+
+      <section class="actions">
+        <button id="openApp" type="button">Open inspector</button>
+        <button id="clear" type="button" class="danger">Clear records</button>
+      </section>
+
+      <section id="summary" class="summary">Loading...</section>
+      <section id="error" class="error" hidden></section>
     </main>
 
     <script type="module" src="./popup.ts"></script>

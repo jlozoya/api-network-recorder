@@ -54,7 +54,6 @@ export default defineConfig({
       input: {
         background: resolve("src/background/index.ts"),
         content: resolve("src/content/index.ts"),
-        injected: resolve("src/injected/index.ts"),
         popup: resolve("src/popup/popup.html"),
         app: resolve("src/app/index.html"),
       },

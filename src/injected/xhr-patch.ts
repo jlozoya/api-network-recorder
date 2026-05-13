@@ -1,8 +1,11 @@
-import { EXTENSION_SOURCE } from "../core/constants.js"
-import { toCapturedTextBody, unavailableBody } from "../core/body-utils.js"
 import type { ExtensionMessage } from "../core/message-types.js"
 import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
-import { redactHeaders } from "../core/redaction.js"
+import {
+  EXTENSION_SOURCE,
+  redactHeaders,
+  toCapturedTextBody,
+  unavailableBody,
+} from "./page-utils.js"
 
 const parseResponseHeaders = (rawHeaders: string): HeaderMap => {
   const headers: HeaderMap = {}
@@ -35,13 +38,21 @@ const postRecord = (record: Omit<NetworkRecord, "tabId">): void => {
     payload: record,
   }
 
-  window.postMessage(
-    {
-      source: EXTENSION_SOURCE,
-      message,
-    },
-    window.location.origin,
-  )
+  try {
+    window.postMessage(
+      {
+        source: EXTENSION_SOURCE,
+        message,
+      },
+      window.location.origin,
+    )
+  } catch {
+    // Recording should never break the host page if posting back to the extension fails.
+  }
+}
+
+const canReadResponseText = (xhr: XMLHttpRequest): boolean => {
+  return xhr.responseType === "" || xhr.responseType === "text"
 }
 
 export const patchXhr = (): void => {
@@ -115,13 +126,17 @@ export const patchXhr = (): void => {
 
         let responseBody: NetworkRecord["responseBody"]
 
-        try {
-          responseBody =
-            typeof xhr.responseText === "string"
-              ? toCapturedTextBody(xhr.responseText, contentType)
-              : unavailableBody("XHR responseText is unavailable")
-        } catch {
-          responseBody = unavailableBody("Unable to read XHR response body")
+        if (canReadResponseText(xhr)) {
+          try {
+            responseBody =
+              typeof xhr.responseText === "string"
+                ? toCapturedTextBody(xhr.responseText, contentType)
+                : unavailableBody("XHR responseText is unavailable")
+          } catch {
+            responseBody = unavailableBody("Unable to read XHR response body")
+          }
+        } else {
+          responseBody = unavailableBody(`XHR responseType '${xhr.responseType}' is not text`)
         }
 
         postRecord({

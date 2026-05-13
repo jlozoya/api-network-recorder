@@ -6,7 +6,7 @@ export const manifest: ManifestV3 = {
   version: "0.1.0",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
-  permissions: ["activeTab", "scripting", "storage", "tabs", "debugger"],
+  permissions: ["activeTab", "storage", "tabs", "webRequest", "debugger"],
   host_permissions: ["<all_urls>"],
   background: {
     service_worker: "assets/background.js",
@@ -22,13 +22,6 @@ export const manifest: ManifestV3 = {
     "128": "icons/icon-128.png",
   },
   content_scripts: [
-    {
-      matches: ["<all_urls>"],
-      js: ["assets/injected.js"],
-      run_at: "document_start",
-      all_frames: true,
-      world: "MAIN",
-    },
     {
       matches: ["<all_urls>"],
       js: ["assets/content.js"],

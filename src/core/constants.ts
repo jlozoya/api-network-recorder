@@ -9,6 +9,36 @@ export const SENSITIVE_HEADER_NAMES = new Set([
   "x-api-key",
   "x-auth-token",
   "proxy-authorization",
+  "x-csrf-token",
+  "x-xsrf-token",
+  "x-amz-security-token",
+  "x-stytch-session",
+  "stytch-session",
+])
+
+export const SENSITIVE_BODY_KEYS = new Set([
+  "access_token",
+  "accessToken",
+  "refresh_token",
+  "refreshToken",
+  "id_token",
+  "idToken",
+  "token",
+  "jwt",
+  "password",
+  "passcode",
+  "otp",
+  "mfa",
+  "totp",
+  "code",
+  "secret",
+  "client_secret",
+  "clientSecret",
+  "api_key",
+  "apiKey",
+  "authorization",
+  "cookie",
+  "set-cookie",
 ])
 
 export const CAPTURABLE_TEXT_CONTENT_TYPES = [

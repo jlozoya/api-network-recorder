@@ -1,5 +1,7 @@
-import { EXTENSION_SOURCE } from "../core/constants.js"
 import type { ExtensionMessage } from "../core/message-types.js"
+import "./page-bridge.js"
+
+const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
 
 window.addEventListener("message", (event: MessageEvent) => {
   if (event.source !== window) {

@@ -1,8 +1,11 @@
-import { EXTENSION_SOURCE } from "../core/constants.js"
-import { toCapturedTextBody, unavailableBody } from "../core/body-utils.js"
 import type { ExtensionMessage } from "../core/message-types.js"
 import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
-import { redactHeaders } from "../core/redaction.js"
+import {
+  EXTENSION_SOURCE,
+  redactHeaders,
+  toCapturedTextBody,
+  unavailableBody,
+} from "./page-utils.js"
 
 const headersToMap = (headers: Headers): HeaderMap => {
   const output: HeaderMap = {}
@@ -35,13 +38,17 @@ const postRecord = (record: Omit<NetworkRecord, "tabId">): void => {
     payload: record,
   }
 
-  window.postMessage(
-    {
-      source: EXTENSION_SOURCE,
-      message,
-    },
-    window.location.origin,
-  )
+  try {
+    window.postMessage(
+      {
+        source: EXTENSION_SOURCE,
+        message,
+      },
+      window.location.origin,
+    )
+  } catch {
+    // Recording should never break the host page if posting back to the extension fails.
+  }
 }
 
 export const patchFetch = (): void => {
