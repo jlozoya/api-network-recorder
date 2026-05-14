@@ -8,7 +8,7 @@ import {
   saveNetworkRecord,
 } from "../../storage/network-record-repository.js"
 import {
-  isDebuggerAttached,
+  getDebuggerCaptureStatus,
   startDebuggerCapture,
   stopDebuggerCapture,
 } from "../debugger/debugger-controller.js"
@@ -103,21 +103,27 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === "START_DEBUGGER_CAPTURE") {
-      respond(sendResponse, startDebuggerCapture(message.payload.tabId).then(() => null), message.type)
+      respond(
+        sendResponse,
+        startDebuggerCapture(message.payload.tabId).then(() => null),
+        message.type,
+      )
       return true
     }
 
     if (message.type === "STOP_DEBUGGER_CAPTURE") {
-      respond(sendResponse, stopDebuggerCapture(message.payload.tabId).then(() => null), message.type)
+      respond(
+        sendResponse,
+        stopDebuggerCapture(message.payload.tabId).then(() => null),
+        message.type,
+      )
       return true
     }
 
     if (message.type === "GET_CAPTURE_STATUS") {
       respond(
         sendResponse,
-        Promise.resolve({
-          attached: isDebuggerAttached(message.payload.tabId),
-        }),
+        Promise.resolve(getDebuggerCaptureStatus(message.payload.tabId)),
         message.type,
       )
 

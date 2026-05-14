@@ -1,13 +1,19 @@
 import type { ManifestV3 } from "./src/manifest.js"
 
-export const manifest: ManifestV3 & {
+type FirefoxManifest = Omit<ManifestV3, "background"> & {
+  background: {
+    scripts: string[]
+    type?: "module"
+  }
   browser_specific_settings: {
     gecko: {
       id: string
       strict_min_version?: string
     }
   }
-} = {
+}
+
+export const manifest: FirefoxManifest = {
   manifest_version: 3,
   name: "API Network Recorder",
   version: "0.1.0",
@@ -16,7 +22,7 @@ export const manifest: ManifestV3 & {
   permissions: ["activeTab", "storage", "tabs", "webRequest"],
   host_permissions: ["<all_urls>"],
   background: {
-    service_worker: "assets/background.js",
+    scripts: ["assets/background.js"],
     type: "module",
   },
   action: {

@@ -5,9 +5,8 @@ import { defineConfig } from "vite"
 import { manifest as chromeManifest } from "./manifest.chrome.config.js"
 import { manifest as firefoxManifest } from "./manifest.firefox.config.js"
 
-const outDir = "dist"
-
 const browserTarget = process.env.BROWSER_TARGET === "firefox" ? "firefox" : "chrome"
+const outDir = resolve("dist", browserTarget)
 const manifest = browserTarget === "firefox" ? firefoxManifest : chromeManifest
 
 const ensureDir = (path: string): void => {
@@ -76,7 +75,7 @@ export default defineConfig({
     {
       name: "build-browser-extension-files",
       closeBundle() {
-        ensureDir(resolve(outDir))
+        ensureDir(outDir)
         writeManifest()
         copyIcons()
         normalizeHtmlOutputs()
