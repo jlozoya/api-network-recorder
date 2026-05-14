@@ -7,17 +7,22 @@
     "dev": "vite build --watch",
     "dev:chrome": "vite build --watch",
     "dev:firefox": "cross-env BROWSER_TARGET=firefox vite build --watch",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && bun run build:chrome && bun run build:firefox",
     "build:chrome": "tsc --noEmit && vite build",
     "build:firefox": "tsc --noEmit && cross-env BROWSER_TARGET=firefox vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "package": "bun run build && bun scripts/package-extension.ts",
+    "package:chrome": "bun run build:chrome && cross-env BROWSER_TARGET=chrome bun scripts/package-extension.ts",
+    "package:firefox": "bun run build:firefox && cross-env BROWSER_TARGET=firefox bun scripts/package-extension.ts"
   },
   "dependencies": {
     "idb": "^8.0.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/chrome": "^0.0.286",
     "@types/node": "^25.6.0",
+    "adm-zip": "^0.5.17",
     "cross-env": "^7.0.3",
     "prettier": "3.8.3",
     "typescript": "^5.7.3",
