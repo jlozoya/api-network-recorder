@@ -2,6 +2,19 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family:
@@ -13,6 +26,13 @@ body {
     sans-serif;
   background: #020617;
   color: #e5e7eb;
+}
+
+#app {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 button,
@@ -63,6 +83,7 @@ p {
 }
 
 .topbar {
+  flex: 0 0 auto;
   min-height: 72px;
   border-bottom: 1px solid #1e293b;
   display: flex;
@@ -85,6 +106,7 @@ p {
 }
 
 .tabs {
+  flex: 0 0 auto;
   display: flex;
   gap: 8px;
   border-bottom: 1px solid #1e293b;
@@ -103,6 +125,7 @@ p {
 }
 
 .filters {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(260px, 1fr) 120px 150px 130px 220px auto;
   gap: 8px;
@@ -129,11 +152,15 @@ p {
 
 .layout {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: minmax(320px, 460px) minmax(0, 1fr);
-  height: calc(100vh - 174px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .list {
+  min-width: 0;
+  min-height: 0;
   border-right: 1px solid #1e293b;
   overflow: auto;
 }
@@ -209,6 +236,8 @@ p {
 }
 
 .details {
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 16px;
 }
@@ -315,11 +344,36 @@ pre {
 }
 
 .fatal {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
   padding: 24px;
 }
 
 .fatal pre {
   max-height: none;
+}
+
+.loadingState {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.loadingState h1 {
+  font-size: 24px;
+}
+
+.loadingState p {
+  color: #94a3b8;
+}
+
+.fatalActions {
+  margin-top: 16px;
 }
 
 @media (max-width: 1100px) {
@@ -329,7 +383,6 @@ pre {
 
   .layout {
     grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
-    height: calc(100vh - 224px);
   }
 
   .summaryGrid {
@@ -353,17 +406,17 @@ pre {
 
   .layout {
     grid-template-columns: 1fr;
-    height: auto;
+    grid-template-rows: minmax(0, 42fr) minmax(0, 58fr);
   }
 
   .list {
-    max-height: 42vh;
+    max-height: none;
     border-right: 0;
     border-bottom: 1px solid #1e293b;
   }
 
   .details {
-    min-height: 50vh;
+    min-height: 0;
   }
 
   .detailsHeader {
@@ -385,25 +438,4 @@ pre {
   .miniRecord span:last-child {
     grid-column: 2;
   }
-}
-
-.loadingState {
-  display: grid;
-  min-height: 100vh;
-  place-content: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-}
-
-.loadingState h1 {
-  font-size: 24px;
-}
-
-.loadingState p {
-  color: #94a3b8;
-}
-
-.fatalActions {
-  margin-top: 16px;
 }

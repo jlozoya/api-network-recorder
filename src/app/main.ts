@@ -32,6 +32,16 @@ interface AppState {
   apiOnly: boolean
   loading: boolean
   error: string | null
+  listeningPaused: boolean
+}
+
+interface PanelScrollState {
+  listScrollTop: number
+  detailsScrollTop: number
+}
+
+interface RenderOptions {
+  preservePanelScroll?: boolean
 }
 
 const state: AppState = {
@@ -47,6 +57,7 @@ const state: AppState = {
   apiOnly: true,
   loading: true,
   error: null,
+  listeningPaused: false,
 }
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -74,6 +85,31 @@ const escapeHtml = (value: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;")
+
+const getPanelScrollState = (): PanelScrollState => {
+  const list = document.querySelector<HTMLElement>(".list")
+  const details = document.querySelector<HTMLElement>(".details")
+
+  return {
+    listScrollTop: list?.scrollTop ?? 0,
+    detailsScrollTop: details?.scrollTop ?? 0,
+  }
+}
+
+const restorePanelScrollState = (scrollState: PanelScrollState): void => {
+  window.requestAnimationFrame(() => {
+    const list = document.querySelector<HTMLElement>(".list")
+    const details = document.querySelector<HTMLElement>(".details")
+
+    if (list) {
+      list.scrollTop = scrollState.listScrollTop
+    }
+
+    if (details) {
+      details.scrollTop = scrollState.detailsScrollTop
+    }
+  })
+}
 
 const formatBody = (body: CapturedBody | null): string => {
   if (!body) return ""
@@ -306,15 +342,18 @@ const renderFilters = (): string => {
 const renderToolbar = (): string => {
   const apiRecords = state.records.filter(isProbablyApiRecord)
   const endpointGroups = groupRecordsByEndpoint(state.records)
+  const listenButtonLabel = state.listeningPaused ? "Continue listening" : "Pause listening"
+  const listenStatusLabel = state.listeningPaused ? "Paused" : "Listening"
 
   return `
     <header class="topbar">
       <div>
         <h1>API Network Recorder</h1>
-        <p>${state.records.length} records · ${apiRecords.length} API-like · ${endpointGroups.length} endpoints</p>
+        <p>${state.records.length} records · ${apiRecords.length} API-like · ${endpointGroups.length} endpoints · ${listenStatusLabel}</p>
       </div>
 
       <div class="topbarActions">
+        <button id="toggleListening" type="button">${listenButtonLabel}</button>
         <button id="refresh" type="button">Refresh</button>
         <button id="exportJson" type="button">Export JSON</button>
         <button id="exportMarkdown" type="button">Export Markdown</button>
@@ -484,7 +523,9 @@ const renderSelectedEndpoint = (): string => {
   `
 }
 
-const render = (): void => {
+const render = (options?: RenderOptions): void => {
+  const previousPanelScrollState = options?.preservePanelScroll ? getPanelScrollState() : null
+
   if (state.error) {
     renderError(state.error)
     return
@@ -511,6 +552,10 @@ const render = (): void => {
   `
 
   bindEvents()
+
+  if (previousPanelScrollState) {
+    restorePanelScrollState(previousPanelScrollState)
+  }
 }
 
 const reload = async (options?: { silent?: boolean }): Promise<void> => {
@@ -550,7 +595,9 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
 
     state.loading = false
     state.error = null
-    render()
+    render({
+      preservePanelScroll: Boolean(options?.silent),
+    })
   } catch (error) {
     if (options?.silent) {
       console.warn("[API Network Recorder] Silent refresh failed.", error)
@@ -565,7 +612,13 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
 
 const scheduleAutoRefresh = (): void => {
   window.setInterval(() => {
-    if (document.hidden || state.loading || state.error || isEditingFilters()) {
+    if (
+      state.listeningPaused ||
+      document.hidden ||
+      state.loading ||
+      state.error ||
+      isEditingFilters()
+    ) {
       return
     }
 
@@ -574,6 +627,19 @@ const scheduleAutoRefresh = (): void => {
 }
 
 const bindEvents = (): void => {
+  document.querySelector("#toggleListening")?.addEventListener("click", () => {
+    state.listeningPaused = !state.listeningPaused
+
+    if (state.listeningPaused) {
+      render({
+        preservePanelScroll: true,
+      })
+      return
+    }
+
+    void reload({ silent: true })
+  })
+
   document.querySelector("#refresh")?.addEventListener("click", () => {
     void reload({ silent: false })
   })
