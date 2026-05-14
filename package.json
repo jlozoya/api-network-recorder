@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "package": "bun run build && bun scripts/package-extension.ts",
     "package:chrome": "bun run build:chrome && cross-env BROWSER_TARGET=chrome bun scripts/package-extension.ts",
-    "package:firefox": "bun run build:firefox && cross-env BROWSER_TARGET=firefox bun scripts/package-extension.ts"
+    "package:firefox": "bun run build:firefox && cross-env BROWSER_TARGET=firefox bun scripts/package-extension.ts",
+    "package:source": "bun scripts/package-source.ts"
   },
   "dependencies": {
     "idb": "^8.0.0"

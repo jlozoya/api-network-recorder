@@ -9,6 +9,10 @@ type FirefoxManifest = Omit<ManifestV3, "background"> & {
     gecko: {
       id: string
       strict_min_version?: string
+      data_collection_permissions: {
+        required: string[]
+        optional?: string[]
+      }
     }
   }
 }
@@ -45,7 +49,10 @@ export const manifest: FirefoxManifest = {
   browser_specific_settings: {
     gecko: {
       id: "api-network-recorder@lozoya.dev",
-      strict_min_version: "109.0",
+      strict_min_version: "140.0",
+      data_collection_permissions: {
+        required: ["websiteContent", "browsingActivity"],
+      },
     },
   },
 }
