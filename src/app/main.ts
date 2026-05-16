@@ -2,6 +2,7 @@ import {
   exportEndpointMarkdown,
   exportOpenApiDraft,
   groupRecordsByEndpoint,
+  hasCapturedBody,
   isProbablyApiRecord,
 } from "../core/endpoint-utils.js"
 import { recordToCurl } from "../core/export-curl.js"
@@ -127,6 +128,35 @@ const formatBody = (body: CapturedBody | null): string => {
   }
 
   return body.value
+}
+
+const formatRecordLabel = (record: NetworkRecord): string => {
+  return `${formatStatus(record)} ${record.source} ${record.completedAt}`
+}
+
+const renderAvailableBodies = (
+  records: NetworkRecord[],
+  getBody: (record: NetworkRecord) => CapturedBody | null,
+): string => {
+  const recordsWithBodies = records.filter((record) => hasCapturedBody(getBody(record)))
+
+  if (!recordsWithBodies.length) {
+    const unavailable = records.find((record) => getBody(record)?.kind === "unavailable")
+    const fallback = unavailable ?? records[0]
+    return `<pre>${escapeHtml(formatBody(fallback ? getBody(fallback) : null))}</pre>`
+  }
+
+  return recordsWithBodies
+    .slice(0, 10)
+    .map(
+      (record) => `
+        <div class="bodySample">
+          <div class="bodySampleMeta">${escapeHtml(formatRecordLabel(record))}</div>
+          <pre>${escapeHtml(formatBody(getBody(record)))}</pre>
+        </div>
+      `,
+    )
+    .join("")
 }
 
 const formatStatus = (record: NetworkRecord): string => {
@@ -479,8 +509,6 @@ const renderSelectedEndpoint = (): string => {
     return `<p class="empty">Select an endpoint group.</p>`
   }
 
-  const sample = group.records[0]
-
   return `
     <section class="detailsHeader">
       <div>
@@ -499,11 +527,11 @@ const renderSelectedEndpoint = (): string => {
       <div><strong>Last seen</strong><span>${escapeHtml(group.lastSeenAt)}</span></div>
     </section>
 
-    <h3>Sample Request Body</h3>
-    <pre>${escapeHtml(formatBody(sample?.requestBody ?? null))}</pre>
+    <h3>Available Request Bodies</h3>
+    ${renderAvailableBodies(group.records, (record) => record.requestBody)}
 
-    <h3>Sample Response Body</h3>
-    <pre>${escapeHtml(formatBody(sample?.responseBody ?? null))}</pre>
+    <h3>Available Response Bodies</h3>
+    ${renderAvailableBodies(group.records, (record) => record.responseBody)}
 
     <h3>Observed Records</h3>
     <div class="miniList">
@@ -513,6 +541,7 @@ const renderSelectedEndpoint = (): string => {
           (record) => `
             <button class="miniRecord" data-id="${record.id}" type="button">
               <strong>${escapeHtml(formatStatus(record))}</strong>
+              <span>${escapeHtml(record.source)}</span>
               <span>${escapeHtml(record.completedAt)}</span>
               <span>${record.durationMs ?? "-"}ms</span>
             </button>

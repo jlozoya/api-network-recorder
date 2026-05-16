@@ -121,43 +121,47 @@ export const patchXhr = (): void => {
       }
 
       xhr.addEventListener("loadend", () => {
-        const responseHeaders = parseResponseHeaders(xhr.getAllResponseHeaders())
-        const contentType = xhr.getResponseHeader("content-type") ?? ""
+        try {
+          const responseHeaders = parseResponseHeaders(xhr.getAllResponseHeaders())
+          const contentType = xhr.getResponseHeader("content-type") ?? ""
 
-        let responseBody: NetworkRecord["responseBody"]
+          let responseBody: NetworkRecord["responseBody"]
 
-        if (canReadResponseText(xhr)) {
-          try {
-            responseBody =
-              typeof xhr.responseText === "string"
-                ? toCapturedTextBody(xhr.responseText, contentType)
-                : unavailableBody("XHR responseText is unavailable")
-          } catch {
-            responseBody = unavailableBody("Unable to read XHR response body")
+          if (canReadResponseText(xhr)) {
+            try {
+              responseBody =
+                typeof xhr.responseText === "string"
+                  ? toCapturedTextBody(xhr.responseText, contentType)
+                  : unavailableBody("XHR responseText is unavailable")
+            } catch {
+              responseBody = unavailableBody("Unable to read XHR response body")
+            }
+          } else {
+            responseBody = unavailableBody(`XHR responseType '${xhr.responseType}' is not text`)
           }
-        } else {
-          responseBody = unavailableBody(`XHR responseType '${xhr.responseType}' is not text`)
-        }
 
-        postRecord({
-          id: crypto.randomUUID(),
-          source: "xhr",
-          pageUrl: location.href,
-          origin: location.origin,
-          method,
-          url,
-          requestHeaders: redactHeaders(requestHeaders),
-          requestBody,
-          status: xhr.status,
-          statusText: xhr.statusText,
-          responseHeaders: redactHeaders(responseHeaders),
-          responseBody,
-          resourceType: "xhr",
-          mimeType: contentType,
-          startedAt,
-          completedAt: new Date().toISOString(),
-          durationMs: Math.round(performance.now() - startedAtMs),
-        })
+          postRecord({
+            id: crypto.randomUUID(),
+            source: "xhr",
+            pageUrl: location.href,
+            origin: location.origin,
+            method,
+            url,
+            requestHeaders: redactHeaders(requestHeaders),
+            requestBody,
+            status: xhr.status,
+            statusText: xhr.statusText,
+            responseHeaders: redactHeaders(responseHeaders),
+            responseBody,
+            resourceType: "xhr",
+            mimeType: contentType,
+            startedAt,
+            completedAt: new Date().toISOString(),
+            durationMs: Math.round(performance.now() - startedAtMs),
+          })
+        } catch {
+          // Recording should never break the host page.
+        }
       })
 
       originalSend(body)

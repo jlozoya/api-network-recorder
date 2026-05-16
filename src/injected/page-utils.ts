@@ -42,6 +42,22 @@ const SENSITIVE_BODY_KEYS = new Set([
   "apiKey",
 ])
 
+const toSafeText = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value
+  }
+
+  if (value === null || value === undefined) {
+    return ""
+  }
+
+  try {
+    return String(value)
+  } catch {
+    return ""
+  }
+}
+
 const redactJsonValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map((item) => redactJsonValue(item))
@@ -64,8 +80,8 @@ const redactJsonValue = (value: unknown): unknown => {
   return value
 }
 
-export const redactText = (value: string): string => {
-  return value
+export const redactText = (value: unknown): string => {
+  return toSafeText(value)
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED}`)
     .replace(/Basic\s+[A-Za-z0-9+/=-]+/gi, `Basic ${REDACTED}`)
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, REDACTED)
@@ -90,18 +106,19 @@ export const redactHeaders = (headers: HeaderMap): HeaderMap => {
   return output
 }
 
-const truncateText = (value: string): { value: string; truncated: boolean; sizeBytes: number } => {
-  const sizeBytes = encoder.encode(value).length
+const truncateText = (value: unknown): { value: string; truncated: boolean; sizeBytes: number } => {
+  const text = toSafeText(value)
+  const sizeBytes = encoder.encode(text).length
   const truncated = sizeBytes > MAX_BODY_SIZE_BYTES
 
   return {
-    value: truncated ? value.slice(0, MAX_BODY_SIZE_BYTES) : value,
+    value: truncated ? text.slice(0, MAX_BODY_SIZE_BYTES) : text,
     truncated,
     sizeBytes,
   }
 }
 
-export const toCapturedTextBody = (value: string, contentType?: string): CapturedBody => {
+export const toCapturedTextBody = (value: unknown, contentType?: string): CapturedBody => {
   const normalizedContentType = contentType?.toLowerCase() ?? ""
   const redacted = redactText(value)
   const safe = truncateText(redacted)

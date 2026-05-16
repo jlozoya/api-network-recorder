@@ -1,4 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { dirname, resolve } from "node:path"
 import { defineConfig } from "vite"
 
@@ -48,6 +55,27 @@ const normalizeHtmlOutputs = (): void => {
   })
 }
 
+const wrapInjectedScript = (): void => {
+  const injectedScript = resolve(outDir, "assets", "injected.js")
+
+  if (!existsSync(injectedScript)) {
+    return
+  }
+
+  const source = readFileSync(injectedScript, "utf8")
+
+  if (source.startsWith(";(() => {")) {
+    return
+  }
+
+  const sourceMapMarker = "\n//# sourceMappingURL="
+  const sourceMapIndex = source.lastIndexOf(sourceMapMarker)
+  const code = sourceMapIndex === -1 ? source : source.slice(0, sourceMapIndex)
+  const sourceMapComment = sourceMapIndex === -1 ? "" : source.slice(sourceMapIndex)
+
+  writeFileSync(injectedScript, `;(() => {\n${code}\n})();${sourceMapComment}`)
+}
+
 export default defineConfig({
   define: {
     __BROWSER_TARGET__: JSON.stringify(browserTarget),
@@ -61,6 +89,7 @@ export default defineConfig({
       input: {
         background: resolve("src/background/index.ts"),
         content: resolve("src/content/index.ts"),
+        injected: resolve("src/injected/index.ts"),
         popup: resolve("src/popup/popup.html"),
         app: resolve("src/app/index.html"),
       },
@@ -79,6 +108,7 @@ export default defineConfig({
         writeManifest()
         copyIcons()
         normalizeHtmlOutputs()
+        wrapInjectedScript()
       },
     },
   ],

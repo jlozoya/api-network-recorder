@@ -37,13 +37,44 @@ const setError = (message: string | null): void => {
   element.textContent = message
 }
 
-const getActiveTabId = async (): Promise<number | null> => {
+interface CaptureTargetTab {
+  id: number
+  url: string
+}
+
+const isCapturableUrl = (url?: string): url is string => {
+  return Boolean(url?.startsWith("http://") || url?.startsWith("https://"))
+}
+
+const getCaptureTargetTab = async (): Promise<CaptureTargetTab | null> => {
   const [tab] = await chrome.tabs.query({
     active: true,
     currentWindow: true,
   })
 
-  return typeof tab?.id === "number" ? tab.id : null
+  if (typeof tab?.id === "number" && isCapturableUrl(tab.url)) {
+    return {
+      id: tab.id,
+      url: tab.url,
+    }
+  }
+
+  const fallbackTabs = await chrome.tabs.query({
+    currentWindow: true,
+    url: ["http://*/*", "https://*/*"],
+  })
+  const [fallbackTab] = fallbackTabs
+    .filter((item): item is chrome.tabs.Tab & CaptureTargetTab => {
+      return typeof item.id === "number" && isCapturableUrl(item.url)
+    })
+    .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+
+  return fallbackTab
+    ? {
+        id: fallbackTab.id,
+        url: fallbackTab.url,
+      }
+    : null
 }
 
 const setCaptureBadge = (attached: boolean): void => {
@@ -81,20 +112,26 @@ const setDeepCaptureButtonState = (
 }
 
 const refreshCaptureStatus = async (): Promise<boolean> => {
-  const tabId = await getActiveTabId()
+  const tab = await getCaptureTargetTab()
 
-  if (typeof tabId !== "number") {
+  if (!tab) {
     setCaptureBadge(false)
-    setDeepCaptureButtonState(false, { disabled: true, busyText: "No active tab" })
+    setDeepCaptureButtonState(false, { disabled: true, busyText: "Open a web tab" })
     return false
   }
 
-  const status = await sendMessage<{ attached: boolean }>({
+  const status = await sendMessage<{ supported: boolean; attached: boolean }>({
     type: "GET_CAPTURE_STATUS",
     payload: {
-      tabId,
+      tabId: tab.id,
     },
   })
+
+  if (!status.supported) {
+    setCaptureBadge(false)
+    setDeepCaptureButtonState(false, { disabled: true, busyText: "Unsupported" })
+    return false
+  }
 
   setCaptureBadge(status.attached)
   setDeepCaptureButtonState(status.attached)
@@ -155,9 +192,12 @@ const refreshSummary = async (): Promise<void> => {
   )
 }
 
-const refresh = async (): Promise<void> => {
+const refresh = async (options?: { clearError?: boolean }): Promise<void> => {
   try {
-    setError(null)
+    if (options?.clearError ?? true) {
+      setError(null)
+    }
+
     await Promise.all([refreshSummary(), refreshSettings(), refreshCaptureStatus()])
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error))
@@ -188,10 +228,10 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
   try {
     setError(null)
 
-    const tabId = await getActiveTabId()
+    const tab = await getCaptureTargetTab()
 
-    if (typeof tabId !== "number") {
-      throw new Error("No active tab found.")
+    if (!tab) {
+      throw new Error("Open an http/https page before starting deep capture.")
     }
 
     const isAttached = await refreshCaptureStatus()
@@ -205,14 +245,14 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
       await sendMessage<null>({
         type: "STOP_DEBUGGER_CAPTURE",
         payload: {
-          tabId,
+          tabId: tab.id,
         },
       })
     } else {
       await sendMessage<null>({
         type: "START_DEBUGGER_CAPTURE",
         payload: {
-          tabId,
+          tabId: tab.id,
         },
       })
     }
@@ -220,7 +260,7 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
     await refresh()
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error))
-    await refresh()
+    await refresh({ clearError: false })
   }
 })
 

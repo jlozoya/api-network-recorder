@@ -147,6 +147,18 @@ export const groupRecordsByEndpoint = (records: NetworkRecord[]): EndpointGroup[
   return Array.from(groups.values()).sort((a, b) => b.count - a.count)
 }
 
+export const hasCapturedBody = (body: CapturedBody | null): boolean => {
+  return Boolean(body && body.kind !== "unavailable")
+}
+
+export const getBestRequestSample = (records: NetworkRecord[]): NetworkRecord | undefined => {
+  return records.find((record) => hasCapturedBody(record.requestBody)) ?? records[0]
+}
+
+export const getBestResponseSample = (records: NetworkRecord[]): NetworkRecord | undefined => {
+  return records.find((record) => hasCapturedBody(record.responseBody)) ?? records[0]
+}
+
 const bodyToExample = (body: CapturedBody | null): unknown => {
   if (!body) return null
 
@@ -214,9 +226,10 @@ const inferJsonSchema = (value: unknown): unknown => {
 export const exportEndpointMarkdown = (groups: EndpointGroup[]): string => {
   return groups
     .map((group) => {
-      const sample = group.records[0]
-      const requestExample = bodyToExample(sample?.requestBody ?? null)
-      const responseExample = bodyToExample(sample?.responseBody ?? null)
+      const requestSample = getBestRequestSample(group.records)
+      const responseSample = getBestResponseSample(group.records)
+      const requestExample = bodyToExample(requestSample?.requestBody ?? null)
+      const responseExample = bodyToExample(responseSample?.responseBody ?? null)
 
       return [
         `## ${group.method} ${group.normalizedPath}`,
@@ -246,7 +259,7 @@ export const exportOpenApiDraft = (groups: EndpointGroup[]): string => {
   const paths: Record<string, Record<string, unknown>> = {}
 
   for (const group of groups) {
-    const sample = group.records[0]
+    const sample = getBestResponseSample(group.records)
     const path = group.normalizedPath.replaceAll("{id}", "{id}").replaceAll("{uuid}", "{uuid}")
     const method = group.method.toLowerCase()
 
