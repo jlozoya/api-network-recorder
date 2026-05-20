@@ -2,6 +2,39 @@ import type { ExtensionMessage } from "../core/message-types.js"
 
 const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
 
+interface ExtensionEnvelope {
+  source: typeof EXTENSION_SOURCE
+  message: Extract<ExtensionMessage, { type: "NETWORK_RECORD_CREATED" }>
+}
+
+const isNetworkRecordMessage = (
+  value: unknown,
+): value is Extract<ExtensionMessage, { type: "NETWORK_RECORD_CREATED" }> => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const message = value as {
+    type?: unknown
+    payload?: unknown
+  }
+
+  return message.type === "NETWORK_RECORD_CREATED" && Boolean(message.payload)
+}
+
+const isExtensionEnvelope = (value: unknown): value is ExtensionEnvelope => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const envelope = value as {
+    source?: unknown
+    message?: unknown
+  }
+
+  return envelope.source === EXTENSION_SOURCE && isNetworkRecordMessage(envelope.message)
+}
+
 const sendToBackground = async (message: ExtensionMessage): Promise<void> => {
   try {
     if (typeof chrome === "undefined" || !chrome.runtime?.id) {
@@ -16,26 +49,15 @@ const sendToBackground = async (message: ExtensionMessage): Promise<void> => {
 }
 
 window.addEventListener("message", (event: MessageEvent) => {
-  if (event.source !== window) {
-    return
-  }
+  try {
+    const data = event.data
 
-  if (!event.data || typeof event.data !== "object") {
-    return
-  }
+    if (event.source !== window || !isExtensionEnvelope(data)) {
+      return
+    }
 
-  const data = event.data as {
-    source?: string
-    message?: ExtensionMessage
+    void sendToBackground(data.message)
+  } catch {
+    // Host pages can send arbitrary window messages; ignore anything that does not match our bridge.
   }
-
-  if (data.source !== EXTENSION_SOURCE) {
-    return
-  }
-
-  if (!data.message) {
-    return
-  }
-
-  void sendToBackground(data.message)
 })
