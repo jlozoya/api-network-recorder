@@ -56,7 +56,9 @@ window.addEventListener("message", (event: MessageEvent) => {
       return
     }
 
-    void sendToBackground(data.message)
+    void sendToBackground(data.message).catch(() => {
+      // Keep extension messaging failures out of host page consoles.
+    })
   } catch {
     // Host pages can send arbitrary window messages; ignore anything that does not match our bridge.
   }
