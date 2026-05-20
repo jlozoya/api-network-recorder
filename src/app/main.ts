@@ -7,12 +7,14 @@ import {
 } from "../core/endpoint-utils.js"
 import { recordToCurl } from "../core/export-curl.js"
 import type { CapturedBody, NetworkRecord } from "../core/network-types.js"
+import { getCaptureSettings, setCaptureSettings } from "../storage/capture-settings.js"
 import { resetDb } from "../storage/db.js"
 import { clearNetworkRecords, listNetworkRecords } from "../storage/network-record-repository.js"
 
 import "./app.css"
 
 const AUTO_REFRESH_INTERVAL_MS = 2_000
+const RECORD_LOAD_TIMEOUT_MS = 30_000
 
 const app = document.querySelector("#app")
 
@@ -251,8 +253,8 @@ const refreshRecords = async (): Promise<NetworkRecord[]> => {
       host: state.host,
       apiOnly: state.apiOnly,
     }),
-    7000,
-    "IndexedDB read",
+    RECORD_LOAD_TIMEOUT_MS,
+    "Local record load",
   )
 }
 
@@ -597,10 +599,15 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
       render()
     }
 
+    const settings = await getCaptureSettings()
     const nextRecords = await refreshRecords()
     const nextFingerprint = getRecordFingerprint(nextRecords)
+    state.listeningPaused = settings.capturePaused
 
     if (options?.silent && previousFingerprint === nextFingerprint) {
+      render({
+        preservePanelScroll: true,
+      })
       return
     }
 
@@ -657,16 +664,26 @@ const scheduleAutoRefresh = (): void => {
 
 const bindEvents = (): void => {
   document.querySelector("#toggleListening")?.addEventListener("click", () => {
-    state.listeningPaused = !state.listeningPaused
+    const nextPaused = !state.listeningPaused
 
-    if (state.listeningPaused) {
-      render({
-        preservePanelScroll: true,
+    state.listeningPaused = nextPaused
+    render({
+      preservePanelScroll: true,
+    })
+
+    void setCaptureSettings({
+      capturePaused: nextPaused,
+      captureActiveSince: nextPaused ? null : new Date().toISOString(),
+    })
+      .then(() => {
+        if (!nextPaused) {
+          void reload({ silent: true })
+        }
       })
-      return
-    }
-
-    void reload({ silent: true })
+      .catch((error: unknown) => {
+        state.error = error instanceof Error ? error.message : String(error)
+        render()
+      })
   })
 
   document.querySelector("#refresh")?.addEventListener("click", () => {

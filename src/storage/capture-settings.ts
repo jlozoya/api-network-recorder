@@ -2,12 +2,16 @@ export type CaptureLimit = 50 | 100 | 150 | 250 | 500 | 1000
 
 export interface CaptureSettings {
   captureLimit: CaptureLimit
+  capturePaused: boolean
+  captureActiveSince: string | null
 }
 
 const STORAGE_KEY = "apiNetworkRecorderSettings"
 
 const DEFAULT_SETTINGS: CaptureSettings = {
   captureLimit: 100,
+  capturePaused: false,
+  captureActiveSince: null,
 }
 
 const ALLOWED_CAPTURE_LIMITS = new Set<number>([50, 100, 150, 250, 500, 1000])
@@ -26,6 +30,9 @@ export const getCaptureSettings = async (): Promise<CaptureSettings> => {
 
   return {
     captureLimit: normalizeCaptureLimit(rawSettings?.captureLimit),
+    capturePaused: rawSettings?.capturePaused === true,
+    captureActiveSince:
+      typeof rawSettings?.captureActiveSince === "string" ? rawSettings.captureActiveSince : null,
   }
 }
 
@@ -37,6 +44,11 @@ export const setCaptureSettings = async (
   const nextSettings: CaptureSettings = {
     ...currentSettings,
     captureLimit: normalizeCaptureLimit(settings.captureLimit ?? currentSettings.captureLimit),
+    capturePaused: settings.capturePaused ?? currentSettings.capturePaused,
+    captureActiveSince:
+      settings.captureActiveSince === undefined
+        ? currentSettings.captureActiveSince
+        : settings.captureActiveSince,
   }
 
   await chrome.storage.local.set({

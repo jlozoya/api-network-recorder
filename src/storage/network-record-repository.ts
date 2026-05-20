@@ -4,26 +4,77 @@ import type { NetworkRecord } from "../core/network-types.js"
 import { getCaptureSettings } from "./capture-settings.js"
 import { getDb } from "./db.js"
 
+const TRIM_EVERY_WRITES = 25
+
+let writesSinceLastTrim = 0
+let trimPromise: Promise<void> | null = null
+
+interface NetworkRecordFilters {
+  apiOnly: boolean
+  method: string | undefined
+  source: NetworkRecord["source"] | "all"
+  host: string | undefined
+  statusGroup: ListNetworkRecordsPayload["statusGroup"]
+  search: string | undefined
+}
+
 const trimNetworkRecords = async (): Promise<void> => {
   const settings = await getCaptureSettings()
   const db = await getDb()
-
-  const records = await db.getAllFromIndex("networkRecords", "by-startedAt")
-  const excess = records.length - settings.captureLimit
+  const count = await db.count("networkRecords")
+  const excess = count - settings.captureLimit
 
   if (excess <= 0) {
     return
   }
 
-  const recordsToDelete = records.slice(0, excess)
+  const transaction = db.transaction("networkRecords", "readwrite")
+  const index = transaction.store.index("by-startedAt")
+  let cursor = await index.openCursor()
+  let deleted = 0
 
-  await Promise.all(recordsToDelete.map((record) => db.delete("networkRecords", record.id)))
+  while (cursor && deleted < excess) {
+    await cursor.delete()
+    deleted += 1
+    cursor = await cursor.continue()
+  }
+
+  await transaction.done
+}
+
+const maybeTrimNetworkRecords = async (): Promise<void> => {
+  writesSinceLastTrim += 1
+
+  if (writesSinceLastTrim < TRIM_EVERY_WRITES && trimPromise) {
+    return
+  }
+
+  if (writesSinceLastTrim < TRIM_EVERY_WRITES) {
+    return
+  }
+
+  writesSinceLastTrim = 0
+  trimPromise ??= trimNetworkRecords().finally(() => {
+    trimPromise = null
+  })
+
+  await trimPromise
 }
 
 export const saveNetworkRecord = async (record: NetworkRecord): Promise<void> => {
+  const settings = await getCaptureSettings()
+
+  if (settings.capturePaused) {
+    return
+  }
+
+  if (settings.captureActiveSince && record.startedAt < settings.captureActiveSince) {
+    return
+  }
+
   const db = await getDb()
   await db.put("networkRecords", record)
-  await trimNetworkRecords()
+  await maybeTrimNetworkRecords()
 }
 
 const recordMatchesStatusGroup = (
@@ -87,15 +138,66 @@ const getRecordHost = (record: NetworkRecord): string => {
   }
 }
 
-const getRecordsNewestFirst = async (): Promise<NetworkRecord[]> => {
+const recordMatchesFilters = (
+  record: NetworkRecord,
+  filters: NetworkRecordFilters,
+): boolean => {
+  if (filters.apiOnly && !isProbablyApiRecord(record)) {
+    return false
+  }
+
+  if (filters.method && filters.method !== "ALL" && record.method.toUpperCase() !== filters.method) {
+    return false
+  }
+
+  if (filters.source !== "all" && record.source !== filters.source) {
+    return false
+  }
+
+  if (filters.host && !getRecordHost(record).includes(filters.host)) {
+    return false
+  }
+
+  if (!recordMatchesStatusGroup(record, filters.statusGroup)) {
+    return false
+  }
+
+  if (filters.search && !getSearchText(record).includes(filters.search)) {
+    return false
+  }
+
+  return true
+}
+
+const getRecordsNewestFirst = async (
+  limit: number,
+  filters: NetworkRecordFilters,
+): Promise<NetworkRecord[]> => {
   const db = await getDb()
+  const records: NetworkRecord[] = []
 
   try {
-    const records = await db.getAllFromIndex("networkRecords", "by-startedAt")
-    return records.reverse()
+    let cursor = await db
+      .transaction("networkRecords")
+      .store.index("by-startedAt")
+      .openCursor(null, "prev")
+
+    while (cursor && records.length < limit) {
+      if (recordMatchesFilters(cursor.value, filters)) {
+        records.push(cursor.value)
+      }
+
+      cursor = await cursor.continue()
+    }
+
+    return records
   } catch {
-    const records = await db.getAll("networkRecords")
-    return records.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    const fallbackRecords = await db.getAll("networkRecords")
+
+    return fallbackRecords
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .filter((record) => recordMatchesFilters(record, filters))
+      .slice(0, limit)
   }
 }
 
@@ -111,37 +213,14 @@ export const listNetworkRecords = async (
   const statusGroup = options?.statusGroup ?? "all"
   const apiOnly = options?.apiOnly ?? false
 
-  const records = await getRecordsNewestFirst()
-
-  return records
-    .filter((record) => {
-      if (apiOnly && !isProbablyApiRecord(record)) {
-        return false
-      }
-
-      if (method && method !== "ALL" && record.method.toUpperCase() !== method) {
-        return false
-      }
-
-      if (source !== "all" && record.source !== source) {
-        return false
-      }
-
-      if (host && !getRecordHost(record).includes(host)) {
-        return false
-      }
-
-      if (!recordMatchesStatusGroup(record, statusGroup)) {
-        return false
-      }
-
-      if (search && !getSearchText(record).includes(search)) {
-        return false
-      }
-
-      return true
-    })
-    .slice(0, limit)
+  return getRecordsNewestFirst(limit, {
+    apiOnly,
+    method,
+    source,
+    host,
+    statusGroup,
+    search,
+  })
 }
 
 export const clearNetworkRecords = async (): Promise<void> => {

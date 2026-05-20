@@ -1,4 +1,4 @@
-import { openDB, type DBSchema } from "idb"
+import { openDB, type DBSchema, type IDBPDatabase } from "idb"
 
 import type { NetworkRecord } from "../core/network-types.js"
 
@@ -19,8 +19,11 @@ interface ApiRecorderDb extends DBSchema {
   }
 }
 
+let dbPromise: Promise<IDBPDatabase<ApiRecorderDb>> | null = null
+let dbInstance: IDBPDatabase<ApiRecorderDb> | null = null
+
 export const getDb = () => {
-  return openDB<ApiRecorderDb>(DATABASE_NAME, DATABASE_VERSION, {
+  dbPromise ??= openDB<ApiRecorderDb>(DATABASE_NAME, DATABASE_VERSION, {
     upgrade(db) {
       if (db.objectStoreNames.contains("networkRecords")) {
         return
@@ -49,10 +52,22 @@ export const getDb = () => {
     terminated() {
       console.warn("[API Network Recorder] IndexedDB connection was terminated.")
     },
+  }).then((db) => {
+    dbInstance = db
+    return db
   })
+
+  return dbPromise
 }
 
 export const resetDb = async (): Promise<void> => {
+  if (dbInstance) {
+    dbInstance.close()
+    dbInstance = null
+  }
+
+  dbPromise = null
+
   const deleteRequest = indexedDB.deleteDatabase(DATABASE_NAME)
 
   await new Promise<void>((resolve, reject) => {
