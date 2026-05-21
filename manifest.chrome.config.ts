@@ -3,7 +3,7 @@ import type { ManifestV3 } from "./src/manifest.js"
 export const manifest: ManifestV3 = {
   manifest_version: 3,
   name: "API Network Recorder",
-  version: "0.1.3",
+  version: "0.1.4",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
   permissions: ["storage", "tabs", "webRequest", "debugger"],
@@ -22,13 +22,6 @@ export const manifest: ManifestV3 = {
     "128": "icons/icon-128.png",
   },
   content_scripts: [
-    {
-      matches: ["<all_urls>"],
-      js: ["assets/injected.js"],
-      run_at: "document_start",
-      all_frames: true,
-      world: "MAIN",
-    },
     {
       matches: ["<all_urls>"],
       js: ["assets/content.js"],
