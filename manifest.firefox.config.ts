@@ -23,7 +23,7 @@ export const manifest: FirefoxManifest = {
   version: "0.1.3",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
-  permissions: ["activeTab", "storage", "tabs", "webRequest"],
+  permissions: ["storage", "tabs", "webRequest"],
   host_permissions: ["<all_urls>"],
   background: {
     scripts: ["assets/background.js"],

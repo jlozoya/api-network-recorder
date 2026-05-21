@@ -75,10 +75,6 @@ Used to store captured records and extension settings locally in the browser.
 
 Used to associate captured network traffic with the correct browser tab and open the inspector page.
 
-### `activeTab`
-
-Used to identify the active tab when the user interacts with the extension.
-
 ### `webRequest`
 
 Used to observe network requests and responses so the extension can display request metadata, response metadata, headers, status codes, and timing information.

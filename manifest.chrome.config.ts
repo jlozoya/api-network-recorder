@@ -6,7 +6,7 @@ export const manifest: ManifestV3 = {
   version: "0.1.3",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
-  permissions: ["activeTab", "storage", "tabs", "webRequest", "debugger"],
+  permissions: ["storage", "tabs", "webRequest", "debugger"],
   host_permissions: ["<all_urls>"],
   background: {
     service_worker: "assets/background.js",
