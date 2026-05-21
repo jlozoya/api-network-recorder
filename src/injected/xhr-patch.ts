@@ -1,7 +1,7 @@
 import type { ExtensionMessage } from "../core/message-types.js"
 import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
 import {
-  EXTENSION_SOURCE,
+  postNetworkRecordMessage,
   redactHeaders,
   toCapturedTextBody,
   unavailableBody,
@@ -38,17 +38,7 @@ const postRecord = (record: Omit<NetworkRecord, "tabId">): void => {
     payload: record,
   }
 
-  try {
-    window.postMessage(
-      {
-        source: EXTENSION_SOURCE,
-        message,
-      },
-      window.location.origin,
-    )
-  } catch {
-    // Recording should never break the host page if posting back to the extension fails.
-  }
+  postNetworkRecordMessage(message)
 }
 
 const canReadResponseText = (xhr: XMLHttpRequest): boolean => {

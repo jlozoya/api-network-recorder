@@ -1,4 +1,5 @@
 import type { CapturedBody, HeaderMap } from "../core/network-types.js"
+import type { ExtensionMessage } from "../core/message-types.js"
 
 export const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
 
@@ -177,3 +178,17 @@ export const unavailableBody = (reason: string): CapturedBody => ({
   kind: "unavailable",
   reason,
 })
+
+export const postNetworkRecordMessage = (message: ExtensionMessage): void => {
+  try {
+    window.postMessage(
+      {
+        source: EXTENSION_SOURCE,
+        message,
+      },
+      "*",
+    )
+  } catch {
+    // Recording should never break the host page if posting back to the extension fails.
+  }
+}
