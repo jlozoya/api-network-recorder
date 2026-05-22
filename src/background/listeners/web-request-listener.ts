@@ -1,4 +1,9 @@
-import { toCapturedTextBody, unavailableBody } from "../../core/body-utils.js"
+import {
+  isTextLikeContentType,
+  toCapturedTextBody,
+  unavailableBody,
+} from "../../core/body-utils.js"
+import { MAX_BODY_SIZE_BYTES } from "../../core/constants.js"
 import { normalizeEndpointPath } from "../../core/endpoint-utils.js"
 import type { CapturedBody, HeaderMap, NetworkRecord } from "../../core/network-types.js"
 import { redactHeaders } from "../../core/redaction.js"
@@ -20,10 +25,32 @@ interface PendingWebRequest {
   status: number | null
   statusText: string | null
   mimeType: string | null
+  responseBody: CapturedBody | null
+  responseBodyPromise: Promise<void> | null
   fromCache: boolean
 }
 
+interface FirefoxStreamFilter {
+  ondata: ((event: { data: ArrayBuffer }) => void) | null
+  onstop: (() => void) | null
+  onerror: (() => void) | null
+  write(data: ArrayBuffer | Uint8Array): void
+  close(): void
+  disconnect(): void
+}
+
+interface FirefoxWebRequestApi {
+  filterResponseData?: (requestId: string) => FirefoxStreamFilter
+}
+
+declare const browser:
+  | {
+      webRequest?: FirefoxWebRequestApi
+    }
+  | undefined
+
 const pendingRequests = new Map<string, PendingWebRequest>()
+const RESPONSE_BODY_STREAM_TIMEOUT_MS = 5_000
 
 const WEB_REQUEST_FILTER: chrome.webRequest.RequestFilter = {
   urls: ["http://*/*", "https://*/*"],
@@ -35,6 +62,14 @@ const isCapturableTab = (tabId: number): boolean => {
 
 const shouldSkipSilentCapture = (tabId: number): boolean => {
   return isCapturableTab(tabId) && (isDeepCaptureEnabled() || isDebuggerAttached(tabId))
+}
+
+const supportsFirefoxResponseFiltering = (): boolean => {
+  return (
+    __BROWSER_TARGET__ === "firefox" &&
+    typeof browser !== "undefined" &&
+    typeof browser.webRequest?.filterResponseData === "function"
+  )
 }
 
 const headersArrayToMap = (headers?: chrome.webRequest.HttpHeader[]): HeaderMap => {
@@ -101,6 +136,83 @@ const decodeUploadBytes = (bytes: ArrayBuffer): string | null => {
   }
 }
 
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = ""
+  const chunkSize = 0x8000
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize))
+  }
+
+  return btoa(binary)
+}
+
+const concatChunks = (chunks: Uint8Array[], sizeBytes: number): Uint8Array => {
+  const output = new Uint8Array(Math.min(sizeBytes, MAX_BODY_SIZE_BYTES))
+  let offset = 0
+
+  for (const chunk of chunks) {
+    const available = output.length - offset
+
+    if (available <= 0) {
+      break
+    }
+
+    const slice = chunk.slice(0, available)
+    output.set(slice, offset)
+    offset += slice.length
+  }
+
+  return output
+}
+
+const responseBodyFromBytes = (
+  bytes: Uint8Array,
+  sizeBytes: number,
+  contentType?: string | null,
+): CapturedBody => {
+  const normalizedContentType = contentType?.toLowerCase() ?? ""
+
+  if (isTextLikeContentType(normalizedContentType)) {
+    try {
+      const text = new TextDecoder().decode(bytes)
+      return toCapturedTextBody(text, normalizedContentType)
+    } catch {
+      return unavailableBody("Unable to decode Firefox response body")
+    }
+  }
+
+  return {
+    kind: "binary",
+    value: toBase64(bytes),
+    truncated: sizeBytes > MAX_BODY_SIZE_BYTES,
+    sizeBytes,
+  }
+}
+
+const withResponseBodyTimeout = (promise: Promise<void>): Promise<void> => {
+  return new Promise((resolve) => {
+    let settled = false
+
+    const timeoutId = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        resolve()
+      }
+    }, RESPONSE_BODY_STREAM_TIMEOUT_MS)
+
+    promise.finally(() => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeoutId)
+      resolve()
+    })
+  })
+}
+
 const requestBodyFromDetails = (
   requestBody: chrome.webRequest.WebRequestBody | null | undefined,
 ): CapturedBody | null => {
@@ -165,6 +277,8 @@ const getPendingOrCreate = (details: WebRequestInitialDetails): PendingWebReques
     status: null,
     statusText: null,
     mimeType: null,
+    responseBody: null,
+    responseBodyPromise: null,
     fromCache: false,
   }
 
@@ -181,6 +295,10 @@ const finalizeRequest = async (requestId: string, error?: string): Promise<void>
   }
 
   pendingRequests.delete(requestId)
+
+  if (pending.responseBodyPromise) {
+    await withResponseBodyTimeout(pending.responseBodyPromise)
+  }
 
   const requestContentType = getHeaderValue(pending.requestHeaders, "content-type")
   const responseContentType = getHeaderValue(pending.responseHeaders, "content-type")
@@ -202,9 +320,13 @@ const finalizeRequest = async (requestId: string, error?: string): Promise<void>
     status: pending.status,
     statusText: pending.statusText,
     responseHeaders: redactHeaders(pending.responseHeaders),
-    responseBody: unavailableBody(
-      "Response body is unavailable in silent webRequest capture. Enable deep capture to inspect response bodies.",
-    ),
+    responseBody:
+      pending.responseBody ??
+      unavailableBody(
+        supportsFirefoxResponseFiltering()
+          ? "Firefox response body stream was unavailable for this request."
+          : "Response body is unavailable in silent webRequest capture. Enable deep capture to inspect response bodies.",
+      ),
     resourceType: pending.type,
     mimeType: responseContentType ?? pending.mimeType,
     startedAt: pending.startedAt,
@@ -224,13 +346,65 @@ const finalizeRequest = async (requestId: string, error?: string): Promise<void>
   await saveNetworkRecord(record)
 }
 
+const startFirefoxResponseBodyCapture = (pending: PendingWebRequest): void => {
+  if (!supportsFirefoxResponseFiltering()) {
+    return
+  }
+
+  const filterResponseData =
+    typeof browser === "undefined" ? undefined : browser.webRequest?.filterResponseData
+
+  if (!filterResponseData) {
+    return
+  }
+
+  const chunks: Uint8Array[] = []
+  let sizeBytes = 0
+
+  try {
+    const filter = filterResponseData(pending.requestId)
+
+    pending.responseBodyPromise = new Promise<void>((resolve) => {
+      filter.ondata = (event) => {
+        const chunk = new Uint8Array(event.data)
+        sizeBytes += chunk.byteLength
+
+        if (concatChunks(chunks, sizeBytes).length < MAX_BODY_SIZE_BYTES) {
+          chunks.push(chunk)
+        }
+
+        filter.write(event.data)
+      }
+
+      filter.onstop = () => {
+        pending.responseBody = responseBodyFromBytes(
+          concatChunks(chunks, sizeBytes),
+          sizeBytes,
+          pending.mimeType,
+        )
+        filter.close()
+        resolve()
+      }
+
+      filter.onerror = () => {
+        pending.responseBody = unavailableBody("Firefox response body stream failed")
+        filter.disconnect()
+        resolve()
+      }
+    })
+  } catch {
+    pending.responseBody = unavailableBody("Firefox response body stream could not be opened")
+    pending.responseBodyPromise = Promise.resolve()
+  }
+}
+
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (!isCapturableTab(details.tabId) || shouldSkipSilentCapture(details.tabId)) {
       return
     }
 
-    pendingRequests.set(details.requestId, {
+    const pending: PendingWebRequest = {
       requestId: details.requestId,
       tabId: details.tabId,
       frameId: typeof details.frameId === "number" ? details.frameId : null,
@@ -245,11 +419,16 @@ chrome.webRequest.onBeforeRequest.addListener(
       status: null,
       statusText: null,
       mimeType: null,
+      responseBody: null,
+      responseBodyPromise: null,
       fromCache: false,
-    })
+    }
+
+    pendingRequests.set(details.requestId, pending)
+    startFirefoxResponseBodyCapture(pending)
   },
   WEB_REQUEST_FILTER,
-  ["requestBody"],
+  supportsFirefoxResponseFiltering() ? ["requestBody", "blocking"] : ["requestBody"],
 )
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
