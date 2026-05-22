@@ -20,7 +20,7 @@ type FirefoxManifest = Omit<ManifestV3, "background"> & {
 export const manifest: FirefoxManifest = {
   manifest_version: 3,
   name: "API Network Recorder",
-  version: "0.1.5",
+  version: "0.1.6",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
   permissions: ["storage", "tabs", "webRequest", "webRequestBlocking", "webRequestFilterResponse"],
