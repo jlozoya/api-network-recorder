@@ -4,8 +4,18 @@ import type { ExtensionMessage } from "../core/message-types.js"
 export const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
 
 const MAX_BODY_SIZE_BYTES = 2 * 1024 * 1024
+const CAPTURABLE_TEXT_CONTENT_TYPES = [
+  "application/json",
+  "application/problem+json",
+  "application/graphql",
+  "text/",
+  "application/x-www-form-urlencoded",
+]
 const REDACTED = "[REDACTED]"
 const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+const MAX_REPLACEMENT_CHARACTER_RATIO = 0.02
+const MAX_CONTROL_CHARACTER_RATIO = 0.05
 
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
@@ -116,6 +126,87 @@ const truncateText = (value: unknown): { value: string; truncated: boolean; size
     value: truncated ? text.slice(0, MAX_BODY_SIZE_BYTES) : text,
     truncated,
     sizeBytes,
+  }
+}
+
+const isTextLikeContentType = (contentType: string): boolean => {
+  return CAPTURABLE_TEXT_CONTENT_TYPES.some((item) => contentType.includes(item))
+}
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = ""
+  const chunkSize = 0x8000
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize))
+  }
+
+  return btoa(binary)
+}
+
+const looksLikeBinaryText = (value: string): boolean => {
+  if (!value) {
+    return false
+  }
+
+  let replacementCharacters = 0
+  let controlCharacters = 0
+
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0
+
+    if (character === "\uFFFD") {
+      replacementCharacters += 1
+    } else if (
+      (codePoint >= 0x00 && codePoint <= 0x08) ||
+      (codePoint >= 0x0e && codePoint <= 0x1f)
+    ) {
+      controlCharacters += 1
+    }
+  }
+
+  return (
+    replacementCharacters / value.length > MAX_REPLACEMENT_CHARACTER_RATIO ||
+    controlCharacters / value.length > MAX_CONTROL_CHARACTER_RATIO
+  )
+}
+
+export const toCapturedBinaryBody = (
+  bytes: Uint8Array,
+  sizeBytes = bytes.byteLength,
+): CapturedBody => {
+  const truncated = sizeBytes > MAX_BODY_SIZE_BYTES
+  const safeBytes = truncated ? bytes.slice(0, MAX_BODY_SIZE_BYTES) : bytes
+
+  return {
+    kind: "binary",
+    value: toBase64(safeBytes),
+    truncated,
+    sizeBytes,
+  }
+}
+
+export const toCapturedBodyFromBytes = (
+  bytes: ArrayBuffer | Uint8Array,
+  contentType?: string | null,
+): CapturedBody => {
+  const normalizedContentType = contentType?.toLowerCase() ?? ""
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+
+  if (normalizedContentType && !isTextLikeContentType(normalizedContentType)) {
+    return toCapturedBinaryBody(view)
+  }
+
+  try {
+    const text = decoder.decode(view)
+
+    if (looksLikeBinaryText(text)) {
+      return toCapturedBinaryBody(view)
+    }
+
+    return toCapturedTextBody(text, normalizedContentType)
+  } catch {
+    return toCapturedBinaryBody(view)
   }
 }
 

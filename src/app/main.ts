@@ -63,7 +63,11 @@ const state: AppState = {
   listeningPaused: false,
 }
 
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+const withTimeout = async <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> => {
   let timeoutId: number | undefined
 
   const timeout = new Promise<never>((_, reject) => {
@@ -126,7 +130,17 @@ const formatBody = (body: CapturedBody | null): string => {
   }
 
   if (body.kind === "binary") {
-    return `[Binary body: ${body.sizeBytes} bytes base64]`
+    const preview = body.value.slice(0, 512)
+    const lines = [
+      `Binary body: ${body.sizeBytes} bytes${body.truncated ? " (truncated)" : ""}`,
+      "Encoding: base64",
+    ]
+
+    if (preview) {
+      lines.push("", body.value.length > preview.length ? `${preview}...` : preview)
+    }
+
+    return lines.join("\n")
   }
 
   return body.value
@@ -134,6 +148,16 @@ const formatBody = (body: CapturedBody | null): string => {
 
 const formatRecordLabel = (record: NetworkRecord): string => {
   return `${formatStatus(record)} ${record.source} ${record.completedAt}`
+}
+
+const renderSection = (title: string, copyKey: string, content: string): string => {
+  return `
+    <div class="sectionHeader">
+      <h3>${escapeHtml(title)}</h3>
+      <button class="copySection" data-copy-key="${escapeHtml(copyKey)}" type="button">Copy</button>
+    </div>
+    <pre>${escapeHtml(content)}</pre>
+  `
 }
 
 const renderAvailableBodies = (
@@ -488,17 +512,10 @@ const renderSelectedRequest = (): string => {
         : ""
     }
 
-    <h3>Request Headers</h3>
-    <pre>${escapeHtml(JSON.stringify(record.requestHeaders, null, 2))}</pre>
-
-    <h3>Request Body</h3>
-    <pre>${escapeHtml(formatBody(record.requestBody))}</pre>
-
-    <h3>Response Headers</h3>
-    <pre>${escapeHtml(JSON.stringify(record.responseHeaders, null, 2))}</pre>
-
-    <h3>Response Body</h3>
-    <pre>${escapeHtml(formatBody(record.responseBody))}</pre>
+    ${renderSection("Request Headers", "requestHeaders", JSON.stringify(record.requestHeaders, null, 2))}
+    ${renderSection("Request Body", "requestBody", formatBody(record.requestBody))}
+    ${renderSection("Response Headers", "responseHeaders", JSON.stringify(record.responseHeaders, null, 2))}
+    ${renderSection("Response Body", "responseBody", formatBody(record.responseBody))}
   `
 }
 
@@ -799,6 +816,31 @@ const bindEvents = (): void => {
     if (record) {
       await copyText(formatBody(record.responseBody))
     }
+  })
+
+  document.querySelectorAll<HTMLButtonElement>(".copySection").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+
+      if (!record) {
+        return
+      }
+
+      const copyKey = button.dataset.copyKey
+      const sectionTextByKey: Record<string, string> = {
+        requestHeaders: JSON.stringify(record.requestHeaders, null, 2),
+        requestBody: formatBody(record.requestBody),
+        responseHeaders: JSON.stringify(record.responseHeaders, null, 2),
+        responseBody: formatBody(record.responseBody),
+      }
+      const text = copyKey ? sectionTextByKey[copyKey] : undefined
+
+      if (typeof text !== "string") {
+        return
+      }
+
+      await copyText(text)
+    })
   })
 
   document.querySelector("#copyEndpointMarkdown")?.addEventListener("click", async () => {

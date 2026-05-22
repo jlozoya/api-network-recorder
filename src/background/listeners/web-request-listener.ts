@@ -1,5 +1,7 @@
 import {
   isTextLikeContentType,
+  toCapturedBinaryBody,
+  toCapturedBodyFromBytes,
   toCapturedTextBody,
   unavailableBody,
 } from "../../core/body-utils.js"
@@ -128,25 +130,6 @@ const getStatusText = (statusLine?: string): string | null => {
   return parts.slice(2).join(" ") || statusLine
 }
 
-const decodeUploadBytes = (bytes: ArrayBuffer): string | null => {
-  try {
-    return new TextDecoder().decode(bytes)
-  } catch {
-    return null
-  }
-}
-
-const toBase64 = (bytes: Uint8Array): string => {
-  let binary = ""
-  const chunkSize = 0x8000
-
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize))
-  }
-
-  return btoa(binary)
-}
-
 const concatChunks = (chunks: Uint8Array[], sizeBytes: number): Uint8Array => {
   const output = new Uint8Array(Math.min(sizeBytes, MAX_BODY_SIZE_BYTES))
   let offset = 0
@@ -173,21 +156,11 @@ const responseBodyFromBytes = (
 ): CapturedBody => {
   const normalizedContentType = contentType?.toLowerCase() ?? ""
 
-  if (isTextLikeContentType(normalizedContentType)) {
-    try {
-      const text = new TextDecoder().decode(bytes)
-      return toCapturedTextBody(text, normalizedContentType)
-    } catch {
-      return unavailableBody("Unable to decode Firefox response body")
-    }
+  if (!normalizedContentType || isTextLikeContentType(normalizedContentType)) {
+    return toCapturedBodyFromBytes(bytes, normalizedContentType)
   }
 
-  return {
-    kind: "binary",
-    value: toBase64(bytes),
-    truncated: sizeBytes > MAX_BODY_SIZE_BYTES,
-    sizeBytes,
-  }
+  return toCapturedBinaryBody(bytes, sizeBytes)
 }
 
 const withResponseBodyTimeout = (promise: Promise<void>): Promise<void> => {
@@ -241,13 +214,7 @@ const requestBodyFromDetails = (
     return null
   }
 
-  const text = decodeUploadBytes(rawBytes)
-
-  if (!text) {
-    return unavailableBody("Unable to decode request body")
-  }
-
-  return toCapturedTextBody(text)
+  return toCapturedBodyFromBytes(rawBytes)
 }
 
 type WebRequestInitialDetails =

@@ -3,6 +3,7 @@ import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
 import {
   postNetworkRecordMessage,
   redactHeaders,
+  toCapturedBodyFromBytes,
   toCapturedTextBody,
   unavailableBody,
 } from "./page-utils.js"
@@ -106,6 +107,17 @@ export const patchXhr = (): void => {
         }
       } else if (body instanceof URLSearchParams) {
         requestBody = toCapturedTextBody(body.toString(), "application/x-www-form-urlencoded")
+      } else if (body instanceof Blob) {
+        void body.arrayBuffer().then((bytes) => {
+          requestBody = toCapturedBodyFromBytes(bytes, body.type || requestContentType)
+        })
+      } else if (body instanceof ArrayBuffer) {
+        requestBody = toCapturedBodyFromBytes(body, requestContentType)
+      } else if (ArrayBuffer.isView(body)) {
+        requestBody = toCapturedBodyFromBytes(
+          new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+          requestContentType,
+        )
       } else if (body) {
         requestBody = unavailableBody("Unsupported XHR request body type")
       }

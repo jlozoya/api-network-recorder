@@ -308,11 +308,6 @@ p {
   word-break: break-word;
 }
 
-h3 {
-  margin-top: 20px;
-  margin-bottom: 8px;
-}
-
 pre {
   border: 1px solid #1e293b;
   border-radius: 10px;
@@ -322,6 +317,26 @@ pre {
   max-height: 520px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.sectionHeader {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+
+.sectionHeader h3 {
+  min-width: 0;
+}
+
+.copySection {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  color: #cbd5e1;
+  font-size: 12px;
 }
 
 .bodySample {

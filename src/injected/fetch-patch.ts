@@ -3,6 +3,7 @@ import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
 import {
   postNetworkRecordMessage,
   redactHeaders,
+  toCapturedBodyFromBytes,
   toCapturedTextBody,
   unavailableBody,
 } from "./page-utils.js"
@@ -20,13 +21,13 @@ const headersToMap = (headers: Headers): HeaderMap => {
 const readRequestBody = async (request: Request): Promise<NetworkRecord["requestBody"]> => {
   try {
     const clone = request.clone()
-    const text = await clone.text()
+    const bytes = await clone.arrayBuffer()
 
-    if (!text) {
+    if (!bytes.byteLength) {
       return null
     }
 
-    return toCapturedTextBody(text, clone.headers.get("content-type") ?? undefined)
+    return toCapturedBodyFromBytes(bytes, clone.headers.get("content-type"))
   } catch {
     return unavailableBody("Unable to read request body")
   }
@@ -65,15 +66,18 @@ const readRequestInitBody = async (
     }
 
     if (body instanceof Blob) {
-      return toCapturedTextBody(await body.text(), body.type || contentType)
+      return toCapturedBodyFromBytes(await body.arrayBuffer(), body.type || contentType)
     }
 
     if (body instanceof ArrayBuffer) {
-      return unavailableBody(`Binary request body: ${body.byteLength} bytes`)
+      return toCapturedBodyFromBytes(body, contentType)
     }
 
     if (ArrayBuffer.isView(body)) {
-      return unavailableBody(`Binary request body: ${body.byteLength} bytes`)
+      return toCapturedBodyFromBytes(
+        new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+        contentType,
+      )
     }
 
     return unavailableBody("Unsupported fetch request body type")
@@ -152,9 +156,9 @@ const recordFetchResponse = async (
   let responseBody: NetworkRecord["responseBody"]
 
   try {
-    const contentType = responseClone.headers.get("content-type") ?? ""
-    const text = await responseClone.text()
-    responseBody = toCapturedTextBody(text, contentType)
+    const contentType = responseClone.headers.get("content-type")
+    const bytes = await responseClone.arrayBuffer()
+    responseBody = toCapturedBodyFromBytes(bytes, contentType)
   } catch {
     responseBody = unavailableBody("Unable to read response body")
   }
