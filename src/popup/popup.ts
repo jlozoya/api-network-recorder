@@ -37,6 +37,14 @@ const setError = (message: string | null): void => {
   element.textContent = message
 }
 
+const setDeepCaptureControlsVisible = (visible: boolean): void => {
+  const section = document.querySelector<HTMLElement>(".deepCapture")
+
+  if (section) {
+    section.hidden = !visible
+  }
+}
+
 interface CaptureTargetTab {
   id: number
   url: string
@@ -112,6 +120,11 @@ const setDeepCaptureButtonState = (
 }
 
 const refreshCaptureStatus = async (): Promise<boolean> => {
+  if (!__SUPPORTS_DEEP_CAPTURE__) {
+    setCaptureBadge(false)
+    return false
+  }
+
   const tab = await getCaptureTargetTab()
 
   if (!tab) {
@@ -225,6 +238,10 @@ document.querySelector("#clear")?.addEventListener("click", async () => {
 })
 
 document.querySelector("#toggleDeepCapture")?.addEventListener("click", async () => {
+  if (!__SUPPORTS_DEEP_CAPTURE__) {
+    return
+  }
+
   try {
     setError(null)
 
@@ -284,5 +301,7 @@ document.querySelector("#captureLimit")?.addEventListener("change", async (event
     setError(error instanceof Error ? error.message : String(error))
   }
 })
+
+setDeepCaptureControlsVisible(__SUPPORTS_DEEP_CAPTURE__)
 
 void refresh()

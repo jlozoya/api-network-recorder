@@ -4,6 +4,7 @@ import { handleDebuggerEvent } from "./debugger-events.js"
 const attachedTabs = new Set<number>()
 const pendingAttachTabs = new Set<number>()
 let deepCaptureEnabled = false
+let stoppingDebuggerCaptureForAllTabs = false
 
 const NETWORK_ENABLE_OPTIONS = {
   maxTotalBufferSize: 100_000_000,
@@ -97,11 +98,21 @@ if (debuggerApi) {
     void handleDebuggerEvent(source.tabId, method, params)
   })
 
-  debuggerApi.onDetach.addListener((source) => {
+  debuggerApi.onDetach.addListener((source, reason) => {
     if (typeof source.tabId === "number") {
       attachedTabs.delete(source.tabId)
       pendingAttachTabs.delete(source.tabId)
     }
+
+    if (reason !== "canceled_by_user" || stoppingDebuggerCaptureForAllTabs) {
+      return
+    }
+
+    void stopDebuggerCaptureForAllTabs().catch(() => {
+      deepCaptureEnabled = false
+      attachedTabs.clear()
+      pendingAttachTabs.clear()
+    })
   })
 }
 
@@ -216,18 +227,28 @@ export const stopDebuggerCapture = async (tabId: number): Promise<void> => {
 }
 
 export const stopDebuggerCaptureForAllTabs = async (): Promise<void> => {
-  await setDeepCaptureEnabled(false)
-  await refreshAttachedTabsFromDebugger().catch(() => {
-    attachedTabs.clear()
-  })
+  if (stoppingDebuggerCaptureForAllTabs) {
+    return
+  }
 
-  const tabIds = Array.from(attachedTabs)
+  stoppingDebuggerCaptureForAllTabs = true
 
-  for (const tabId of tabIds) {
-    await stopDebuggerCapture(tabId).catch(() => {
-      attachedTabs.delete(tabId)
-      pendingAttachTabs.delete(tabId)
+  try {
+    await setDeepCaptureEnabled(false)
+    await refreshAttachedTabsFromDebugger().catch(() => {
+      attachedTabs.clear()
     })
+
+    const tabIds = Array.from(attachedTabs)
+
+    for (const tabId of tabIds) {
+      await stopDebuggerCapture(tabId).catch(() => {
+        attachedTabs.delete(tabId)
+        pendingAttachTabs.delete(tabId)
+      })
+    }
+  } finally {
+    stoppingDebuggerCaptureForAllTabs = false
   }
 }
 
