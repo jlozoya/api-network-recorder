@@ -66,6 +66,10 @@ p {
   background: #020617;
 }
 
+.deepCapture[hidden] {
+  display: none;
+}
+
 .settings label,
 .deepCapture strong {
   color: #e5e7eb;
