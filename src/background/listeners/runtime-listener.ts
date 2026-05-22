@@ -8,9 +8,9 @@ import {
   saveNetworkRecord,
 } from "../../storage/network-record-repository.js"
 import {
-  getDebuggerCaptureStatus,
+  getFreshDebuggerCaptureStatus,
   startDebuggerCapture,
-  stopDebuggerCapture,
+  stopDebuggerCaptureForAllTabs,
 } from "../debugger/debugger-controller.js"
 
 const withTimeout = async <T>(
@@ -64,7 +64,11 @@ chrome.runtime.onMessage.addListener(
         tabId: sender.tab?.id ?? null,
       }
 
-      respond(sendResponse, saveNetworkRecord(record).then(() => null), message.type)
+      respond(
+        sendResponse,
+        saveNetworkRecord(record).then(() => null),
+        message.type,
+      )
       return true
     }
 
@@ -74,7 +78,11 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === "CLEAR_RECORDS") {
-      respond(sendResponse, clearNetworkRecords().then(() => null), message.type)
+      respond(
+        sendResponse,
+        clearNetworkRecords().then(() => null),
+        message.type,
+      )
       return true
     }
 
@@ -114,18 +122,14 @@ chrome.runtime.onMessage.addListener(
     if (message.type === "STOP_DEBUGGER_CAPTURE") {
       respond(
         sendResponse,
-        stopDebuggerCapture(message.payload.tabId).then(() => null),
+        stopDebuggerCaptureForAllTabs().then(() => null),
         message.type,
       )
       return true
     }
 
     if (message.type === "GET_CAPTURE_STATUS") {
-      respond(
-        sendResponse,
-        Promise.resolve(getDebuggerCaptureStatus(message.payload.tabId)),
-        message.type,
-      )
+      respond(sendResponse, getFreshDebuggerCaptureStatus(message.payload.tabId), message.type)
 
       return true
     }

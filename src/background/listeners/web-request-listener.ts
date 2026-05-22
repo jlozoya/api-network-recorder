@@ -3,7 +3,7 @@ import { normalizeEndpointPath } from "../../core/endpoint-utils.js"
 import type { CapturedBody, HeaderMap, NetworkRecord } from "../../core/network-types.js"
 import { redactHeaders } from "../../core/redaction.js"
 import { saveNetworkRecord } from "../../storage/network-record-repository.js"
-import { isDebuggerAttached } from "../debugger/debugger-controller.js"
+import { isDebuggerAttached, isDeepCaptureEnabled } from "../debugger/debugger-controller.js"
 
 interface PendingWebRequest {
   requestId: string
@@ -34,7 +34,7 @@ const isCapturableTab = (tabId: number): boolean => {
 }
 
 const shouldSkipSilentCapture = (tabId: number): boolean => {
-  return isCapturableTab(tabId) && isDebuggerAttached(tabId)
+  return isCapturableTab(tabId) && (isDeepCaptureEnabled() || isDebuggerAttached(tabId))
 }
 
 const headersArrayToMap = (headers?: chrome.webRequest.HttpHeader[]): HeaderMap => {
@@ -282,40 +282,34 @@ chrome.webRequest.onHeadersReceived.addListener(
   ["responseHeaders"],
 )
 
-chrome.webRequest.onCompleted.addListener(
-  (details) => {
-    if (!isCapturableTab(details.tabId)) {
-      return
-    }
+chrome.webRequest.onCompleted.addListener((details) => {
+  if (!isCapturableTab(details.tabId)) {
+    return
+  }
 
-    if (shouldSkipSilentCapture(details.tabId)) {
-      pendingRequests.delete(details.requestId)
-      return
-    }
+  if (shouldSkipSilentCapture(details.tabId)) {
+    pendingRequests.delete(details.requestId)
+    return
+  }
 
-    const pending = getPendingOrCreate(details)
+  const pending = getPendingOrCreate(details)
 
-    pending.status = details.statusCode
-    pending.statusText = getStatusText(details.statusLine)
-    pending.fromCache = Boolean(details.fromCache)
+  pending.status = details.statusCode
+  pending.statusText = getStatusText(details.statusLine)
+  pending.fromCache = Boolean(details.fromCache)
 
-    void finalizeRequest(details.requestId)
-  },
-  WEB_REQUEST_FILTER,
-)
+  void finalizeRequest(details.requestId)
+}, WEB_REQUEST_FILTER)
 
-chrome.webRequest.onErrorOccurred.addListener(
-  (details) => {
-    if (!isCapturableTab(details.tabId)) {
-      return
-    }
+chrome.webRequest.onErrorOccurred.addListener((details) => {
+  if (!isCapturableTab(details.tabId)) {
+    return
+  }
 
-    if (shouldSkipSilentCapture(details.tabId)) {
-      pendingRequests.delete(details.requestId)
-      return
-    }
+  if (shouldSkipSilentCapture(details.tabId)) {
+    pendingRequests.delete(details.requestId)
+    return
+  }
 
-    void finalizeRequest(details.requestId, details.error)
-  },
-  WEB_REQUEST_FILTER,
-)
+  void finalizeRequest(details.requestId, details.error)
+}, WEB_REQUEST_FILTER)
