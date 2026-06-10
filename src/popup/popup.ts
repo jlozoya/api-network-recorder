@@ -13,6 +13,12 @@ const sendMessage = async <T>(message: ExtensionMessage): Promise<T> => {
   return response.data
 }
 
+const delay = async (milliseconds: number): Promise<void> => {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
+
 const setText = (selector: string, value: string): void => {
   const element = document.querySelector(selector)
 
@@ -36,6 +42,25 @@ const setError = (message: string | null): void => {
 
   element.hidden = false
   element.textContent = message
+}
+
+const setButtonBusy = (selector: string, busy: boolean, busyText: string): void => {
+  const button = document.querySelector<HTMLButtonElement>(selector)
+
+  if (!button) {
+    return
+  }
+
+  if (busy) {
+    button.dataset.defaultText = button.textContent ?? ""
+    button.textContent = busyText
+    button.disabled = true
+    return
+  }
+
+  button.textContent = button.dataset.defaultText || button.textContent
+  button.disabled = false
+  delete button.dataset.defaultText
 }
 
 const setIgnoreError = (message: string | null): void => {
@@ -305,6 +330,19 @@ const refresh = async (options?: { clearError?: boolean }): Promise<void> => {
   }
 }
 
+const refreshAfterClearTimeout = async (): Promise<void> => {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await delay(1000)
+    await refresh()
+
+    const summary = document.querySelector("#summary")?.textContent ?? ""
+
+    if (summary.startsWith("0 stored records.")) {
+      return
+    }
+  }
+}
+
 document.querySelector("#openApp")?.addEventListener("click", () => {
   void sendMessage<null>({
     type: "OPEN_APP",
@@ -315,13 +353,26 @@ document.querySelector("#openApp")?.addEventListener("click", () => {
 
 document.querySelector("#clear")?.addEventListener("click", async () => {
   try {
+    setError(null)
+    setButtonBusy("#clear", true, "Clearing...")
+
     await sendMessage<null>({
       type: "CLEAR_RECORDS",
     })
 
     await refresh()
   } catch (error) {
-    setError(error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+
+    if (message.includes("CLEAR_RECORDS timed out")) {
+      await refreshAfterClearTimeout()
+      return
+    }
+
+    setError(message)
+    await refresh({ clearError: false })
+  } finally {
+    setButtonBusy("#clear", false, "Clear records")
   }
 })
 

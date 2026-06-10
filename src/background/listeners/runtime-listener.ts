@@ -40,8 +40,9 @@ const respond = <T>(
   sendResponse: (response: ExtensionResponse<T>) => void,
   promise: Promise<T>,
   label: string,
+  timeoutMs = 7000,
 ): void => {
-  withTimeout(promise, 7000, label)
+  withTimeout(promise, timeoutMs, label)
     .then((data) => {
       sendResponse({ ok: true, data })
     })
@@ -83,6 +84,7 @@ chrome.runtime.onMessage.addListener(
         sendResponse,
         clearNetworkRecords().then(() => null),
         message.type,
+        30000,
       )
       return true
     }
