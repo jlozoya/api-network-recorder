@@ -40,8 +40,11 @@ export type ExtensionMessage =
       }
     }
   | {
+      type: "START_DEBUGGER_CAPTURE_ALL"
+    }
+  | {
       type: "STOP_DEBUGGER_CAPTURE"
-      payload: {
+      payload?: {
         tabId: number
       }
     }

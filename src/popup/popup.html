@@ -28,12 +28,38 @@
         <p>Older records are deleted automatically.</p>
       </section>
 
+      <section class="actions">
+        <button id="openApp" type="button">Open inspector</button>
+        <button id="clear" type="button" class="danger">Clear records</button>
+      </section>
+
+      <section id="summary" class="summary">Loading...</section>
+
+      <section id="error" class="error" hidden></section>
+
+      <section class="ignoreRules">
+        <div>
+          <strong>Ignore capture</strong>
+          <p>Skip the current tab or domains you do not want stored.</p>
+        </div>
+
+        <button id="toggleIgnoreTab" type="button">Checking tab...</button>
+
+        <form id="addDomainForm" class="domainForm">
+          <input id="domainInput" type="text" placeholder="example.com" autocomplete="off" />
+          <button type="submit">Add domain</button>
+        </form>
+        <p id="ignoreError" class="fieldError" aria-live="polite" hidden></p>
+
+        <div id="ignoredDomains" class="ignoredDomains"></div>
+      </section>
+
       <section class="deepCapture" hidden>
         <div>
           <strong>Deep capture</strong>
           <p>
-            Optional. Uses Chrome debugger and can capture response bodies. Chrome will
-            show a debugger banner while enabled.
+            Optional. Uses Chrome debugger and can capture response bodies. Chrome will show a
+            debugger banner while enabled.
           </p>
         </div>
 
@@ -42,13 +68,6 @@
         </div>
       </section>
 
-      <section class="actions">
-        <button id="openApp" type="button">Open inspector</button>
-        <button id="clear" type="button" class="danger">Clear records</button>
-      </section>
-
-      <section id="summary" class="summary">Loading...</section>
-      <section id="error" class="error" hidden></section>
     </main>
 
     <script type="module" src="./popup.ts"></script>

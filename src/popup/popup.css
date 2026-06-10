@@ -3,7 +3,7 @@
 }
 
 body {
-  width: 400px;
+  width: min(420px, 100vw);
   margin: 0;
   font-family:
     Inter,
@@ -12,11 +12,13 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  background: #0f172a;
-  color: #e5e7eb;
+  background: #101114;
+  color: #f4f4f5;
 }
 
 main {
+  display: grid;
+  gap: 14px;
   padding: 16px;
 }
 
@@ -35,16 +37,18 @@ h1 {
 
 p {
   margin: 4px 0 0;
-  color: #94a3b8;
+  color: #a1a1aa;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .badge {
   flex: 0 0 auto;
-  border: 1px solid #334155;
+  border: 1px solid #3f3f46;
   border-radius: 999px;
   padding: 4px 8px;
-  color: #cbd5e1;
-  background: #1e293b;
+  color: #d4d4d8;
+  background: #27272a;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -56,14 +60,14 @@ p {
 }
 
 .settings,
+.ignoreRules,
 .deepCapture {
   display: grid;
   gap: 8px;
-  margin: 16px 0;
-  border: 1px solid #1e293b;
-  border-radius: 10px;
+  border: 1px solid #2f3437;
+  border-radius: 8px;
   padding: 12px;
-  background: #020617;
+  background: #18191d;
 }
 
 .deepCapture[hidden] {
@@ -71,24 +75,83 @@ p {
 }
 
 .settings label,
+.ignoreRules strong,
 .deepCapture strong {
-  color: #e5e7eb;
+  color: #f4f4f5;
   font-size: 13px;
   font-weight: 700;
 }
 
-.settings select {
-  border: 1px solid #334155;
-  border-radius: 8px;
-  padding: 9px 10px;
-  color: #e5e7eb;
-  background: #1e293b;
+input,
+select,
+button {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
 }
 
-.settings p,
-.deepCapture p {
+.settings select,
+.domainForm input {
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #f4f4f5;
+  background: #27272a;
+}
+
+.domainForm input[aria-invalid="true"] {
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 2px rgb(185 28 28 / 0.25);
+}
+
+.domainForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  gap: 8px;
+}
+
+.ignoredDomains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ignoredDomains p {
+  margin: 0;
+}
+
+.fieldError {
+  margin: 0;
+  border: 1px solid #7f1d1d;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #fecaca;
+  background: #450a0a;
+}
+
+.domainChip {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  gap: 6px;
+  align-items: center;
+  border-color: #3f3f46;
+  padding: 5px 8px;
+  color: #e7e5e4;
+  background: #292524;
   font-size: 12px;
-  line-height: 1.4;
+}
+
+.domainChip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.domainChip strong {
+  color: #fca5a5;
+  font-size: 12px;
 }
 
 .deepCaptureActions {
@@ -101,20 +164,19 @@ p {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin: 16px 0;
 }
 
 button {
-  border: 1px solid #334155;
+  border: 1px solid #3f3f46;
   border-radius: 8px;
   padding: 9px 10px;
-  color: #e5e7eb;
-  background: #1e293b;
+  color: #f4f4f5;
+  background: #27272a;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  background: #334155;
+  background: #3f3f46;
 }
 
 button:disabled {
@@ -123,13 +185,13 @@ button:disabled {
 }
 
 button[data-active="true"] {
-  border-color: #7f1d1d;
-  color: #fecaca;
-  background: #450a0a;
+  border-color: #a16207;
+  color: #fef3c7;
+  background: #422006;
 }
 
 button[data-active="true"]:hover:not(:disabled) {
-  background: #7f1d1d;
+  background: #713f12;
 }
 
 button.danger {
@@ -142,23 +204,41 @@ button.danger:hover:not(:disabled) {
   background: #7f1d1d;
 }
 
+.domainChip {
+  width: auto;
+}
+
 .summary {
-  border: 1px solid #1e293b;
-  border-radius: 10px;
+  border: 1px solid #2f3437;
+  border-radius: 8px;
   padding: 10px;
-  color: #cbd5e1;
-  background: #020617;
+  color: #d4d4d8;
+  background: #18191d;
   font-size: 13px;
   line-height: 1.4;
 }
 
 .error {
-  margin-top: 10px;
   border: 1px solid #7f1d1d;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 10px;
   color: #fecaca;
   background: #450a0a;
   font-size: 13px;
   line-height: 1.4;
+}
+
+@media (max-width: 360px) {
+  header {
+    flex-direction: column;
+  }
+
+  .badge {
+    align-self: flex-start;
+  }
+
+  .domainForm,
+  .actions {
+    grid-template-columns: 1fr;
+  }
 }

@@ -6,6 +6,7 @@ import {
   isProbablyApiRecord,
 } from "../core/endpoint-utils.js"
 import { recordToCurl } from "../core/export-curl.js"
+import type { ExtensionMessage, ExtensionResponse } from "../core/message-types.js"
 import type { CapturedBody, NetworkRecord } from "../core/network-types.js"
 import { getCaptureSettings, setCaptureSettings } from "../storage/capture-settings.js"
 import { resetDb } from "../storage/db.js"
@@ -36,6 +37,8 @@ interface AppState {
   loading: boolean
   error: string | null
   listeningPaused: boolean
+  deepCaptureEnabled: boolean
+  deepCaptureBusy: boolean
 }
 
 interface PanelScrollState {
@@ -61,6 +64,8 @@ const state: AppState = {
   loading: true,
   error: null,
   listeningPaused: false,
+  deepCaptureEnabled: false,
+  deepCaptureBusy: false,
 }
 
 const withTimeout = async <T>(
@@ -92,6 +97,69 @@ const escapeHtml = (value: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;")
+
+const sendMessage = async <T>(message: ExtensionMessage): Promise<T> => {
+  const response = (await chrome.runtime.sendMessage(message)) as ExtensionResponse<T>
+
+  if (!response.ok) {
+    throw new Error(response.error)
+  }
+
+  return response.data
+}
+
+type ToolbarIcon =
+  | "pause"
+  | "play"
+  | "refresh"
+  | "bolt"
+  | "stop"
+  | "download"
+  | "braces"
+  | "file"
+  | "trash"
+
+const icon = (name: ToolbarIcon): string => {
+  const paths: Record<ToolbarIcon, string> = {
+    pause: `<path d="M8 5v14"/><path d="M16 5v14"/>`,
+    play: `<path d="m7 4 12 8-12 8z"/>`,
+    refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
+    bolt: `<path d="m13 2-8 12h7l-1 8 8-12h-7z"/>`,
+    stop: `<rect x="6" y="6" width="12" height="12" rx="2"/>`,
+    download: `<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>`,
+    braces: `<path d="M8 3H7a3 3 0 0 0-3 3v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a3 3 0 0 0 3 3h1"/><path d="M16 3h1a3 3 0 0 1 3 3v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a3 3 0 0 1-3 3h-1"/>`,
+    file: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/>`,
+    trash: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>`,
+  }
+
+  return `<svg class="buttonIcon" viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`
+}
+
+const renderActionButton = (
+  id: string,
+  label: string,
+  iconName: ToolbarIcon,
+  options?: {
+    className?: string
+    active?: boolean
+    disabled?: boolean
+  },
+): string => {
+  const classes = ["actionButton", options?.className].filter(Boolean).join(" ")
+
+  return `
+    <button
+      id="${id}"
+      class="${classes}"
+      type="button"
+      ${options?.active ? `data-active="true"` : ""}
+      ${options?.disabled ? "disabled" : ""}
+    >
+      ${icon(iconName)}
+      <span class="buttonLabel">${escapeHtml(label)}</span>
+    </button>
+  `
+}
 
 const getPanelScrollState = (): PanelScrollState => {
   const list = document.querySelector<HTMLElement>(".list")
@@ -400,6 +468,11 @@ const renderToolbar = (): string => {
   const endpointGroups = groupRecordsByEndpoint(state.records)
   const listenButtonLabel = state.listeningPaused ? "Continue listening" : "Pause listening"
   const listenStatusLabel = state.listeningPaused ? "Paused" : "Listening"
+  const deepCaptureButtonLabel = state.deepCaptureBusy
+    ? "Working..."
+    : state.deepCaptureEnabled
+      ? "Stop deep capture"
+      : "Start deep capture"
 
   return `
     <header class="topbar">
@@ -409,12 +482,37 @@ const renderToolbar = (): string => {
       </div>
 
       <div class="topbarActions">
-        <button id="toggleListening" type="button">${listenButtonLabel}</button>
-        <button id="refresh" type="button">Refresh</button>
-        <button id="exportJson" type="button">Export JSON</button>
-        <button id="exportMarkdown" type="button">Export Markdown</button>
-        <button id="exportOpenApi" type="button">Export OpenAPI</button>
-        <button id="clear" type="button" class="danger">Clear</button>
+        <div class="actionRow controlActions ${__SUPPORTS_DEEP_CAPTURE__ ? "" : "noDeepCapture"}">
+          ${renderActionButton(
+            "toggleListening",
+            listenButtonLabel,
+            state.listeningPaused ? "play" : "pause",
+            {
+              active: state.listeningPaused,
+            },
+          )}
+          ${renderActionButton("refresh", "Refresh", "refresh")}
+          ${
+            __SUPPORTS_DEEP_CAPTURE__
+              ? renderActionButton(
+                  "toggleDeepCapture",
+                  deepCaptureButtonLabel,
+                  state.deepCaptureEnabled ? "stop" : "bolt",
+                  {
+                    active: state.deepCaptureEnabled,
+                    disabled: state.deepCaptureBusy,
+                  },
+                )
+              : ""
+          }
+          ${renderActionButton("clear", "Clear", "trash", { className: "danger" })}
+        </div>
+
+        <div class="actionRow exportActions">
+          ${renderActionButton("exportJson", "Export JSON", "braces")}
+          ${renderActionButton("exportMarkdown", "Export Markdown", "file")}
+          ${renderActionButton("exportOpenApi", "Export OpenAPI", "download")}
+        </div>
       </div>
     </header>
 
@@ -620,6 +718,7 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     const nextRecords = await refreshRecords()
     const nextFingerprint = getRecordFingerprint(nextRecords)
     state.listeningPaused = settings.capturePaused
+    state.deepCaptureEnabled = settings.deepCaptureEnabled
 
     if (options?.silent && previousFingerprint === nextFingerprint) {
       render({
@@ -705,6 +804,30 @@ const bindEvents = (): void => {
 
   document.querySelector("#refresh")?.addEventListener("click", () => {
     void reload({ silent: false })
+  })
+
+  document.querySelector("#toggleDeepCapture")?.addEventListener("click", () => {
+    const nextEnabled = !state.deepCaptureEnabled
+
+    state.deepCaptureBusy = true
+    state.deepCaptureEnabled = nextEnabled
+    render({
+      preservePanelScroll: true,
+    })
+
+    void sendMessage<null>({
+      type: nextEnabled ? "START_DEBUGGER_CAPTURE_ALL" : "STOP_DEBUGGER_CAPTURE",
+    })
+      .then(async () => {
+        state.deepCaptureBusy = false
+        await reload({ silent: true })
+      })
+      .catch((error: unknown) => {
+        state.deepCaptureBusy = false
+        state.deepCaptureEnabled = !nextEnabled
+        state.error = error instanceof Error ? error.message : String(error)
+        render()
+      })
   })
 
   document.querySelector("#clear")?.addEventListener("click", async () => {

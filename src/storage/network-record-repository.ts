@@ -1,7 +1,7 @@
 import type { ListNetworkRecordsPayload } from "../core/message-types.js"
 import { isProbablyApiRecord } from "../core/endpoint-utils.js"
 import type { NetworkRecord } from "../core/network-types.js"
-import { getCaptureSettings } from "./capture-settings.js"
+import { getCaptureSettings, isUrlIgnoredByDomains } from "./capture-settings.js"
 import { getDb } from "./db.js"
 
 const TRIM_EVERY_WRITES = 25
@@ -72,6 +72,17 @@ export const saveNetworkRecord = async (record: NetworkRecord): Promise<void> =>
     return
   }
 
+  if (typeof record.tabId === "number" && settings.ignoredTabIds.includes(record.tabId)) {
+    return
+  }
+
+  if (
+    isUrlIgnoredByDomains(record.url, settings.ignoredDomains) ||
+    isUrlIgnoredByDomains(record.pageUrl, settings.ignoredDomains)
+  ) {
+    return
+  }
+
   const db = await getDb()
   await db.put("networkRecords", record)
   await maybeTrimNetworkRecords()
@@ -138,15 +149,16 @@ const getRecordHost = (record: NetworkRecord): string => {
   }
 }
 
-const recordMatchesFilters = (
-  record: NetworkRecord,
-  filters: NetworkRecordFilters,
-): boolean => {
+const recordMatchesFilters = (record: NetworkRecord, filters: NetworkRecordFilters): boolean => {
   if (filters.apiOnly && !isProbablyApiRecord(record)) {
     return false
   }
 
-  if (filters.method && filters.method !== "ALL" && record.method.toUpperCase() !== filters.method) {
+  if (
+    filters.method &&
+    filters.method !== "ALL" &&
+    record.method.toUpperCase() !== filters.method
+  ) {
     return false
   }
 

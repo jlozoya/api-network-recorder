@@ -1,4 +1,8 @@
-import { getCaptureSettings, setCaptureSettings } from "../../storage/capture-settings.js"
+import {
+  getCaptureSettings,
+  isUrlIgnoredByDomains,
+  setCaptureSettings,
+} from "../../storage/capture-settings.js"
 import { handleDebuggerEvent } from "./debugger-events.js"
 
 const attachedTabs = new Set<number>()
@@ -153,6 +157,15 @@ const attachDebuggerToTab = async (tabId: number): Promise<void> => {
     throw new Error("Deep capture only works on http/https tabs.")
   }
 
+  const settings = await getCaptureSettings()
+
+  if (
+    settings.ignoredTabIds.includes(tabId) ||
+    isUrlIgnoredByDomains(tab?.url, settings.ignoredDomains)
+  ) {
+    return
+  }
+
   pendingAttachTabs.add(tabId)
 
   const target: chrome.debugger.Debuggee = { tabId }
@@ -195,6 +208,11 @@ export const startDebuggerCaptureForAllTabs = async (): Promise<void> => {
 
 export const startDebuggerCapture = async (tabId: number): Promise<void> => {
   await attachDebuggerToTab(tabId)
+  await setDeepCaptureEnabled(true)
+  await startDebuggerCaptureForAllTabs()
+}
+
+export const startDebuggerCaptureForAllAvailableTabs = async (): Promise<void> => {
   await setDeepCaptureEnabled(true)
   await startDebuggerCaptureForAllTabs()
 }

@@ -24,8 +24,8 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  background: #020617;
-  color: #e5e7eb;
+  background: #101114;
+  color: #f4f4f5;
 }
 
 #app {
@@ -46,8 +46,8 @@ select,
 input {
   border: 1px solid #334155;
   border-radius: 8px;
-  color: #e5e7eb;
-  background: #1e293b;
+  color: #f4f4f5;
+  background: #27272a;
 }
 
 button {
@@ -56,7 +56,7 @@ button {
 }
 
 button:hover {
-  background: #334155;
+  background: #3f3f46;
 }
 
 button.danger {
@@ -95,14 +95,73 @@ p {
 
 .topbar p {
   margin-top: 4px;
-  color: #94a3b8;
+  color: #a1a1aa;
 }
 
 .topbarActions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
-  justify-content: flex-end;
+  width: min(100%, 700px);
+}
+
+.actionRow {
+  display: grid;
+  gap: 8px;
+}
+
+.controlActions {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
+.controlActions.noDeepCapture {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+
+.exportActions {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+
+.actionButton {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.actionButton:disabled {
+  cursor: progress;
+  opacity: 0.66;
+}
+
+.actionButton[data-active="true"]:not(.danger) {
+  border-color: #a16207;
+  color: #fef3c7;
+  background: #422006;
+}
+
+.actionButton[data-active="true"]:not(.danger):hover {
+  background: #713f12;
+}
+
+.buttonIcon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.buttonLabel {
+  display: block;
+  width: 124px;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
 }
 
 .tabs {
@@ -111,27 +170,27 @@ p {
   gap: 8px;
   border-bottom: 1px solid #1e293b;
   padding: 10px 16px;
-  background: #020617;
+  background: #101114;
 }
 
 .tab {
-  color: #94a3b8;
+  color: #a1a1aa;
   background: transparent;
 }
 
 .tab.active {
-  color: #e5e7eb;
-  background: #1e293b;
+  color: #f4f4f5;
+  background: #27272a;
 }
 
 .filters {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 120px 150px 130px 220px auto;
+  grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(120px, 0.7fr)) auto;
   gap: 8px;
   border-bottom: 1px solid #1e293b;
   padding: 12px 16px;
-  background: #0f172a;
+  background: #18191d;
 }
 
 .checkbox {
@@ -139,7 +198,7 @@ p {
   gap: 8px;
   align-items: center;
   min-height: 38px;
-  color: #cbd5e1;
+  color: #d4d4d8;
   font-size: 13px;
   white-space: nowrap;
 }
@@ -153,7 +212,7 @@ p {
 .layout {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(320px, 460px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 440px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -173,11 +232,11 @@ p {
 
 .record:hover,
 .record.selected {
-  background: #0f172a;
+  background: #18191d;
 }
 
 .record.selected {
-  box-shadow: inset 3px 0 0 #818cf8;
+  box-shadow: inset 3px 0 0 #14b8a6;
 }
 
 .recordMeta {
@@ -194,8 +253,8 @@ p {
 .recordMeta span {
   border-radius: 999px;
   padding: 2px 7px;
-  color: #94a3b8;
-  background: #111827;
+  color: #a1a1aa;
+  background: #202124;
   font-size: 12px;
 }
 
@@ -216,14 +275,14 @@ p {
 
 .host {
   margin-top: 8px;
-  color: #94a3b8;
+  color: #a1a1aa;
   font-size: 12px;
   word-break: break-all;
 }
 
 .url {
   margin-top: 4px;
-  color: #cbd5e1;
+  color: #d4d4d8;
   font-size: 12px;
   word-break: break-all;
 }
@@ -251,7 +310,7 @@ p {
 
 .detailsUrl {
   margin-top: 8px;
-  color: #94a3b8;
+  color: #a1a1aa;
   word-break: break-all;
 }
 
@@ -271,9 +330,9 @@ p {
 
 .summaryGrid div {
   border: 1px solid #1e293b;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 10px;
-  background: #0f172a;
+  background: #18191d;
 }
 
 .summaryGrid strong,
@@ -283,13 +342,13 @@ p {
 }
 
 .summaryGrid strong {
-  color: #94a3b8;
+  color: #a1a1aa;
   font-size: 12px;
 }
 
 .summaryGrid span {
   margin-top: 4px;
-  color: #e5e7eb;
+  color: #f4f4f5;
   font-size: 13px;
   word-break: break-word;
 }
@@ -310,8 +369,8 @@ p {
 
 pre {
   border: 1px solid #1e293b;
-  border-radius: 10px;
-  background: #0f172a;
+  border-radius: 8px;
+  background: #18191d;
   padding: 12px;
   overflow: auto;
   max-height: 520px;
@@ -335,7 +394,7 @@ pre {
 .copySection {
   flex: 0 0 auto;
   padding: 5px 9px;
-  color: #cbd5e1;
+  color: #d4d4d8;
   font-size: 12px;
 }
 
@@ -349,14 +408,14 @@ pre {
 }
 
 .bodySampleMeta {
-  color: #94a3b8;
+  color: #a1a1aa;
   font-size: 12px;
   word-break: break-word;
 }
 
 .empty {
   padding: 16px;
-  color: #94a3b8;
+  color: #a1a1aa;
 }
 
 .miniList {
@@ -399,7 +458,7 @@ pre {
 }
 
 .loadingState p {
-  color: #94a3b8;
+  color: #a1a1aa;
 }
 
 .fatalActions {
@@ -407,6 +466,15 @@ pre {
 }
 
 @media (max-width: 1100px) {
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbarActions {
+    width: 100%;
+  }
+
   .filters {
     grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(120px, 160px));
   }
@@ -426,8 +494,9 @@ pre {
     flex-direction: column;
   }
 
-  .topbarActions {
-    justify-content: flex-start;
+  .controlActions,
+  .exportActions {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
   .filters {
@@ -467,5 +536,16 @@ pre {
 
   .miniRecord span {
     grid-column: 2;
+  }
+}
+
+@media (max-width: 420px) {
+  .controlActions,
+  .exportActions {
+    grid-template-columns: 1fr;
+  }
+
+  .buttonLabel {
+    width: 150px;
   }
 }

@@ -10,6 +10,7 @@ import {
 import {
   getFreshDebuggerCaptureStatus,
   startDebuggerCapture,
+  startDebuggerCaptureForAllAvailableTabs,
   stopDebuggerCaptureForAllTabs,
 } from "../debugger/debugger-controller.js"
 
@@ -114,6 +115,15 @@ chrome.runtime.onMessage.addListener(
       respond(
         sendResponse,
         startDebuggerCapture(message.payload.tabId).then(() => null),
+        message.type,
+      )
+      return true
+    }
+
+    if (message.type === "START_DEBUGGER_CAPTURE_ALL") {
+      respond(
+        sendResponse,
+        startDebuggerCaptureForAllAvailableTabs().then(() => null),
         message.type,
       )
       return true
