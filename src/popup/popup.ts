@@ -200,7 +200,36 @@ const setIgnoredTabButtonState = (
   }
 
   const ignored = settings.ignoredTabIds.includes(tab.id)
-  button.textContent = ignored ? "Capture this tab again" : `Ignore this tab (${getHost(tab.url)})`
+  button.textContent = ignored ? "Capture this tab again" : "Ignore this tab"
+  button.disabled = false
+  button.dataset.active = String(ignored)
+}
+
+const getTabDomain = (tab: CaptureTargetTab | null): string | null => {
+  return tab ? normalizeIgnoredDomain(getHost(tab.url)) : null
+}
+
+const setIgnoreDomainButtonState = (
+  settings: CaptureSettings,
+  tab: CaptureTargetTab | null,
+): void => {
+  const button = document.querySelector<HTMLButtonElement>("#toggleIgnoreDomain")
+
+  if (!button) {
+    return
+  }
+
+  const domain = getTabDomain(tab)
+
+  if (!domain) {
+    button.textContent = "Open a web tab"
+    button.disabled = true
+    button.dataset.active = "false"
+    return
+  }
+
+  const ignored = settings.ignoredDomains.includes(domain)
+  button.textContent = ignored ? `Stop ignoring ${domain}` : `Ignore (${domain})`
   button.disabled = false
   button.dataset.active = String(ignored)
 }
@@ -331,6 +360,7 @@ const refresh = async (options?: { clearError?: boolean }): Promise<void> => {
     }
 
     setIgnoredTabButtonState(settings, tab)
+    setIgnoreDomainButtonState(settings, tab)
     renderIgnoredDomains(settings)
     applyCaptureStatus(captureStatus)
   } catch (error) {
@@ -470,6 +500,38 @@ document.querySelector("#toggleIgnoreTab")?.addEventListener("click", async () =
       type: "SET_CAPTURE_SETTINGS",
       payload: {
         ignoredTabIds,
+      },
+    })
+
+    await refresh()
+  } catch (error) {
+    setError(error instanceof Error ? error.message : String(error))
+  }
+})
+
+document.querySelector("#toggleIgnoreDomain")?.addEventListener("click", async () => {
+  try {
+    const [settings, tab] = await Promise.all([
+      sendMessage<CaptureSettings>({
+        type: "GET_CAPTURE_SETTINGS",
+      }),
+      getCaptureTargetTab(),
+    ])
+
+    const domain = getTabDomain(tab)
+
+    if (!domain) {
+      throw new Error("Open an http/https page before ignoring a domain.")
+    }
+
+    const ignoredDomains = settings.ignoredDomains.includes(domain)
+      ? settings.ignoredDomains.filter((item) => item !== domain)
+      : Array.from(new Set([...settings.ignoredDomains, domain]))
+
+    await sendMessage<CaptureSettings>({
+      type: "SET_CAPTURE_SETTINGS",
+      payload: {
+        ignoredDomains,
       },
     })
 

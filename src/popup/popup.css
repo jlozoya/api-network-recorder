@@ -136,6 +136,18 @@ button {
   gap: 8px;
 }
 
+.ignoreToggleRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ignoreToggleRow button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ignoredDomains {
   display: flex;
   flex-wrap: wrap;
@@ -264,7 +276,8 @@ button.danger:hover:not(:disabled) {
   }
 
   .domainForm,
-  .actions {
+  .actions,
+  .ignoreToggleRow {
     grid-template-columns: 1fr;
   }
 }
