@@ -95,6 +95,24 @@ button.danger:hover {
   background: #7f1d1d;
 }
 
+@keyframes copyFlash {
+  0% {
+    background: #134e4a;
+    border-color: #2dd4bf;
+    color: #99f6e4;
+  }
+
+  100% {
+    background: #27272a;
+    border-color: #334155;
+    color: #f4f4f5;
+  }
+}
+
+.copyFlash {
+  animation: copyFlash 900ms ease-out;
+}
+
 input,
 select {
   min-width: 0;

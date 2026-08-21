@@ -192,10 +192,7 @@ const getListAnchor = (): ListAnchor => {
     return { pinnedToTop: true, anchorKey: null, anchorOffset: 0 }
   }
 
-  if (list.scrollTop <= LIST_TOP_PIN_THRESHOLD_PX) {
-    return { pinnedToTop: true, anchorKey: null, anchorOffset: 0 }
-  }
-
+  const pinnedToTop = list.scrollTop <= LIST_TOP_PIN_THRESHOLD_PX
   const containerTop = list.getBoundingClientRect().top
 
   for (const item of list.querySelectorAll<HTMLElement>("[data-id], [data-endpoint-key]")) {
@@ -203,24 +200,20 @@ const getListAnchor = (): ListAnchor => {
 
     if (itemTop >= containerTop) {
       return {
-        pinnedToTop: false,
+        pinnedToTop,
         anchorKey: getListItemKey(item),
         anchorOffset: itemTop - containerTop,
       }
     }
   }
 
-  return { pinnedToTop: false, anchorKey: null, anchorOffset: 0 }
+  return { pinnedToTop, anchorKey: null, anchorOffset: 0 }
 }
 
 const restoreListAnchor = (anchor: ListAnchor): void => {
   const list = document.querySelector<HTMLElement>(".list")
 
-  if (!list) {
-    return
-  }
-
-  if (anchor.pinnedToTop || !anchor.anchorKey) {
+  if (!list || !anchor.anchorKey) {
     return
   }
 
@@ -233,7 +226,15 @@ const restoreListAnchor = (anchor: ListAnchor): void => {
   const containerTop = list.getBoundingClientRect().top
   const targetTop = target.getBoundingClientRect().top
 
+  // Jump instantly to keep the previously-anchored record exactly where it
+  // was (invisible to the user), then glide the rest of the way to reveal
+  // any newly captured records above it — only when the user was already
+  // pinned near the top, same as a chat autoscrolling to new messages.
   list.scrollTop += targetTop - containerTop - anchor.anchorOffset
+
+  if (anchor.pinnedToTop && list.scrollTop > 0) {
+    list.scrollTo({ top: 0, behavior: "smooth" })
+  }
 }
 
 const getPanelScrollState = (): PanelScrollState => {
@@ -389,6 +390,23 @@ const downloadText = (filename: string, content: string, type: string): void => 
 
 const copyText = async (value: string): Promise<void> => {
   await navigator.clipboard.writeText(value)
+}
+
+const COPY_FLASH_CLASS = "copyFlash"
+const COPY_FLASH_DURATION_MS = 900
+
+const flashCopied = (button: HTMLElement | null): void => {
+  if (!button) {
+    return
+  }
+
+  button.classList.remove(COPY_FLASH_CLASS)
+  void button.offsetWidth // restart the animation if the button was clicked again mid-flash
+  button.classList.add(COPY_FLASH_CLASS)
+
+  window.setTimeout(() => {
+    button.classList.remove(COPY_FLASH_CLASS)
+  }, COPY_FLASH_DURATION_MS)
 }
 
 const getRecordFingerprint = (records: NetworkRecord[]): string => {
@@ -671,6 +689,7 @@ const renderSelectedRequest = (): string => {
         <p class="detailsUrl">${escapeHtml(record.url)}</p>
       </div>
       <div class="detailsActions">
+        <button id="copyDomain" type="button">Copy domain</button>
         <button id="copyCurl" type="button">Copy cURL</button>
         <button id="copyResponse" type="button">Copy response</button>
       </div>
@@ -1002,19 +1021,33 @@ const bindEvents = (): void => {
     })
   })
 
-  document.querySelector("#copyCurl")?.addEventListener("click", async () => {
+  document.querySelector<HTMLButtonElement>("#copyDomain")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLElement
+    const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+
+    if (record) {
+      await copyText(getHost(record.url))
+      flashCopied(button)
+    }
+  })
+
+  document.querySelector<HTMLButtonElement>("#copyCurl")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLElement
     const record = state.records.find((entry) => entry.id === state.selectedRecordId)
 
     if (record) {
       await copyText(recordToCurl(record))
+      flashCopied(button)
     }
   })
 
-  document.querySelector("#copyResponse")?.addEventListener("click", async () => {
+  document.querySelector<HTMLButtonElement>("#copyResponse")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLElement
     const record = state.records.find((entry) => entry.id === state.selectedRecordId)
 
     if (record) {
       await copyText(formatBody(record.responseBody))
+      flashCopied(button)
     }
   })
 
@@ -1040,18 +1073,23 @@ const bindEvents = (): void => {
       }
 
       await copyText(text)
+      flashCopied(button)
     })
   })
 
-  document.querySelector("#copyEndpointMarkdown")?.addEventListener("click", async () => {
-    const group = groupRecordsByEndpoint(state.records).find(
-      (entry) => entry.key === state.selectedEndpointKey,
-    )
+  document
+    .querySelector<HTMLButtonElement>("#copyEndpointMarkdown")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLElement
+      const group = groupRecordsByEndpoint(state.records).find(
+        (entry) => entry.key === state.selectedEndpointKey,
+      )
 
-    if (group) {
-      await copyText(exportEndpointMarkdown([group]))
-    }
-  })
+      if (group) {
+        await copyText(exportEndpointMarkdown([group]))
+        flashCopied(button)
+      }
+    })
 }
 
 void reload({ silent: false }).then(() => {
