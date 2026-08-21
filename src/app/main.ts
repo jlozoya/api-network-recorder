@@ -41,8 +41,14 @@ interface AppState {
   deepCaptureBusy: boolean
 }
 
+interface ListAnchor {
+  pinnedToTop: boolean
+  anchorKey: string | null
+  anchorOffset: number
+}
+
 interface PanelScrollState {
-  listScrollTop: number
+  listAnchor: ListAnchor
   detailsScrollTop: number
 }
 
@@ -161,24 +167,89 @@ const renderActionButton = (
   `
 }
 
-const getPanelScrollState = (): PanelScrollState => {
+const LIST_TOP_PIN_THRESHOLD_PX = 8
+
+const getListItemKey = (item: HTMLElement): string | null => {
+  return item.dataset.id ?? item.dataset.endpointKey ?? null
+}
+
+const findListItem = (list: HTMLElement, key: string): HTMLElement | null => {
+  return (
+    list.querySelector<HTMLElement>(`[data-id="${CSS.escape(key)}"]`) ??
+    list.querySelector<HTMLElement>(`[data-endpoint-key="${CSS.escape(key)}"]`)
+  )
+}
+
+// New records are prepended to the top of the list (newest first), so a raw
+// scrollTop offset would silently show different records after every
+// refresh. Instead we anchor to whichever record was at the top of the
+// viewport, like a chat that only autoscrolls when you're already pinned to
+// the newest messages.
+const getListAnchor = (): ListAnchor => {
   const list = document.querySelector<HTMLElement>(".list")
+
+  if (!list) {
+    return { pinnedToTop: true, anchorKey: null, anchorOffset: 0 }
+  }
+
+  if (list.scrollTop <= LIST_TOP_PIN_THRESHOLD_PX) {
+    return { pinnedToTop: true, anchorKey: null, anchorOffset: 0 }
+  }
+
+  const containerTop = list.getBoundingClientRect().top
+
+  for (const item of list.querySelectorAll<HTMLElement>("[data-id], [data-endpoint-key]")) {
+    const itemTop = item.getBoundingClientRect().top
+
+    if (itemTop >= containerTop) {
+      return {
+        pinnedToTop: false,
+        anchorKey: getListItemKey(item),
+        anchorOffset: itemTop - containerTop,
+      }
+    }
+  }
+
+  return { pinnedToTop: false, anchorKey: null, anchorOffset: 0 }
+}
+
+const restoreListAnchor = (anchor: ListAnchor): void => {
+  const list = document.querySelector<HTMLElement>(".list")
+
+  if (!list) {
+    return
+  }
+
+  if (anchor.pinnedToTop || !anchor.anchorKey) {
+    return
+  }
+
+  const target = findListItem(list, anchor.anchorKey)
+
+  if (!target) {
+    return
+  }
+
+  const containerTop = list.getBoundingClientRect().top
+  const targetTop = target.getBoundingClientRect().top
+
+  list.scrollTop += targetTop - containerTop - anchor.anchorOffset
+}
+
+const getPanelScrollState = (): PanelScrollState => {
   const details = document.querySelector<HTMLElement>(".details")
 
   return {
-    listScrollTop: list?.scrollTop ?? 0,
+    listAnchor: getListAnchor(),
     detailsScrollTop: details?.scrollTop ?? 0,
   }
 }
 
 const restorePanelScrollState = (scrollState: PanelScrollState): void => {
   window.requestAnimationFrame(() => {
-    const list = document.querySelector<HTMLElement>(".list")
-    const details = document.querySelector<HTMLElement>(".details")
+    restoreListAnchor(scrollState.listAnchor)
 
-    if (list) {
-      list.scrollTop = scrollState.listScrollTop
-    }
+    const details = document.querySelector<HTMLElement>(".details")
 
     if (details) {
       details.scrollTop = scrollState.detailsScrollTop
@@ -331,6 +402,14 @@ const isEditingFilters = (): boolean => {
     activeElement instanceof HTMLInputElement ||
     activeElement instanceof HTMLSelectElement ||
     activeElement instanceof HTMLTextAreaElement
+  )
+}
+
+const hasActiveSelection = (): boolean => {
+  const selection = window.getSelection()
+
+  return Boolean(
+    selection && !selection.isCollapsed && selection.anchorNode && app.contains(selection.anchorNode),
   )
 }
 
@@ -721,9 +800,6 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     state.deepCaptureEnabled = settings.deepCaptureEnabled
 
     if (options?.silent && previousFingerprint === nextFingerprint) {
-      render({
-        preservePanelScroll: true,
-      })
       return
     }
 
@@ -769,7 +845,8 @@ const scheduleAutoRefresh = (): void => {
       document.hidden ||
       state.loading ||
       state.error ||
-      isEditingFilters()
+      isEditingFilters() ||
+      hasActiveSelection()
     ) {
       return
     }

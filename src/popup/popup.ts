@@ -229,18 +229,19 @@ const renderIgnoredDomains = (settings: CaptureSettings): void => {
     .join("")
 }
 
-const refreshCaptureStatus = async (): Promise<boolean> => {
+interface CaptureStatusData {
+  attached: boolean
+  disabled: boolean
+  busyText?: string
+}
+
+const fetchCaptureStatus = async (tab: CaptureTargetTab | null): Promise<CaptureStatusData> => {
   if (!__SUPPORTS_DEEP_CAPTURE__) {
-    setCaptureBadge(false)
-    return false
+    return { attached: false, disabled: false }
   }
 
-  const tab = await getCaptureTargetTab()
-
   if (!tab) {
-    setCaptureBadge(false)
-    setDeepCaptureButtonState(false, { disabled: true, busyText: "Open a web tab" })
-    return false
+    return { attached: false, disabled: true, busyText: "Open a web tab" }
   }
 
   const status = await sendMessage<{ supported: boolean; attached: boolean }>({
@@ -251,41 +252,23 @@ const refreshCaptureStatus = async (): Promise<boolean> => {
   })
 
   if (!status.supported) {
-    setCaptureBadge(false)
-    setDeepCaptureButtonState(false, { disabled: true, busyText: "Unsupported" })
-    return false
+    return { attached: false, disabled: true, busyText: "Unsupported" }
   }
 
-  setCaptureBadge(status.attached)
-  setDeepCaptureButtonState(status.attached)
-
-  return status.attached
+  return { attached: status.attached, disabled: false }
 }
 
-const refreshSettings = async (): Promise<void> => {
-  const settings = await sendMessage<CaptureSettings>({
-    type: "GET_CAPTURE_SETTINGS",
-  })
+const applyCaptureStatus = (data: CaptureStatusData): boolean => {
+  setCaptureBadge(data.attached)
+  setDeepCaptureButtonState(
+    data.attached,
+    data.busyText ? { disabled: data.disabled, busyText: data.busyText } : { disabled: data.disabled },
+  )
 
-  const select = document.querySelector<HTMLSelectElement>("#captureLimit")
-
-  if (select) {
-    select.value = String(settings.captureLimit)
-  }
-
-  setIgnoredTabButtonState(settings, await getCaptureTargetTab())
-  renderIgnoredDomains(settings)
+  return data.attached
 }
 
-const refreshSummary = async (): Promise<void> => {
-  const records = await sendMessage<NetworkRecord[]>({
-    type: "GET_RECORDS",
-    payload: {
-      limit: 1000,
-      apiOnly: false,
-    },
-  })
-
+const buildSummaryText = (records: NetworkRecord[]): string => {
   const apiRecords = records.filter((record) => {
     const resourceType = record.resourceType?.toLowerCase() ?? ""
     const mimeType = record.mimeType?.toLowerCase() ?? ""
@@ -312,19 +295,44 @@ const refreshSummary = async (): Promise<void> => {
       .filter((host): host is string => Boolean(host)),
   )
 
-  setText(
-    "#summary",
-    `${records.length} stored records. ${apiRecords.length} API-like. ${deepRecords} deep. ${errors} errors. ${hosts.size} hosts.`,
-  )
+  return `${records.length} stored records. ${apiRecords.length} API-like. ${deepRecords} deep. ${errors} errors. ${hosts.size} hosts.`
 }
 
 const refresh = async (options?: { clearError?: boolean }): Promise<void> => {
   try {
+    const tab = await getCaptureTargetTab()
+
+    // Fetch everything before touching the DOM so the popup's layout
+    // settles in a single pass instead of resizing once per response.
+    const [records, settings, captureStatus] = await Promise.all([
+      sendMessage<NetworkRecord[]>({
+        type: "GET_RECORDS",
+        payload: {
+          limit: 1000,
+          apiOnly: false,
+        },
+      }),
+      sendMessage<CaptureSettings>({
+        type: "GET_CAPTURE_SETTINGS",
+      }),
+      fetchCaptureStatus(tab),
+    ])
+
     if (options?.clearError ?? true) {
       setError(null)
     }
 
-    await Promise.all([refreshSummary(), refreshSettings(), refreshCaptureStatus()])
+    setText("#summary", buildSummaryText(records))
+
+    const select = document.querySelector<HTMLSelectElement>("#captureLimit")
+
+    if (select) {
+      select.value = String(settings.captureLimit)
+    }
+
+    setIgnoredTabButtonState(settings, tab)
+    renderIgnoredDomains(settings)
+    applyCaptureStatus(captureStatus)
   } catch (error) {
     setError(error instanceof Error ? error.message : String(error))
   }
@@ -390,7 +398,7 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
       throw new Error("Open an http/https page before starting deep capture.")
     }
 
-    const isAttached = await refreshCaptureStatus()
+    const isAttached = applyCaptureStatus(await fetchCaptureStatus(tab))
 
     setDeepCaptureButtonState(isAttached, {
       disabled: true,
