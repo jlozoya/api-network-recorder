@@ -3,7 +3,7 @@ import type { ManifestV3 } from "./src/manifest.js"
 export const manifest: ManifestV3 = {
   manifest_version: 3,
   name: "API Network Recorder",
-  version: "0.2.3",
+  version: "0.2.4",
   description:
     "Capture authorized API requests and responses for debugging, documentation, and API analysis.",
   permissions: ["storage", "tabs", "webRequest", "debugger"],

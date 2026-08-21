@@ -1002,14 +1002,14 @@ const bindEvents = (): void => {
   document.querySelectorAll<HTMLElement>(".record[data-id]").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedRecordId = item.dataset.id ?? null
-      render()
+      render({ preservePanelScroll: true })
     })
   })
 
   document.querySelectorAll<HTMLElement>(".record[data-endpoint-key]").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedEndpointKey = item.dataset.endpointKey ?? null
-      render()
+      render({ preservePanelScroll: true })
     })
   })
 
@@ -1017,7 +1017,7 @@ const bindEvents = (): void => {
     button.addEventListener("click", () => {
       state.selectedRecordId = button.dataset.id ?? null
       state.view = "requests"
-      render()
+      render({ preservePanelScroll: true })
     })
   })
 
