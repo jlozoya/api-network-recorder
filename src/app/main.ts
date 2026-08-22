@@ -8,7 +8,11 @@ import {
 import { recordToCurl } from "../core/export-curl.js"
 import type { ExtensionMessage, ExtensionResponse } from "../core/message-types.js"
 import type { CapturedBody, NetworkRecord } from "../core/network-types.js"
-import { getCaptureSettings, setCaptureSettings } from "../storage/capture-settings.js"
+import {
+  getCaptureSettings,
+  normalizeIgnoredDomain,
+  setCaptureSettings,
+} from "../storage/capture-settings.js"
 import { resetDb } from "../storage/db.js"
 import { clearNetworkRecords, listNetworkRecords } from "../storage/network-record-repository.js"
 
@@ -39,6 +43,7 @@ interface AppState {
   listeningPaused: boolean
   deepCaptureEnabled: boolean
   deepCaptureBusy: boolean
+  ignoredDomains: string[]
 }
 
 interface ListAnchor {
@@ -72,6 +77,7 @@ const state: AppState = {
   listeningPaused: false,
   deepCaptureEnabled: false,
   deepCaptureBusy: false,
+  ignoredDomains: [],
 }
 
 const withTimeout = async <T>(
@@ -682,6 +688,9 @@ const renderSelectedRequest = (): string => {
     return `<p class="empty">Select a request.</p>`
   }
 
+  const domain = normalizeIgnoredDomain(getHost(record.url))
+  const domainIgnored = domain !== null && state.ignoredDomains.includes(domain)
+
   return `
     <section class="detailsHeader">
       <div>
@@ -692,6 +701,20 @@ const renderSelectedRequest = (): string => {
         <button id="copyDomain" type="button">Copy domain</button>
         <button id="copyCurl" type="button">Copy cURL</button>
         <button id="copyResponse" type="button">Copy response</button>
+        ${
+          domain
+            ? `
+              <button
+                id="toggleIgnoreDomain"
+                type="button"
+                data-domain="${escapeHtml(domain)}"
+                ${domainIgnored ? `data-active="true"` : ""}
+              >
+                ${domainIgnored ? "Stop ignoring domain" : "Ignore this domain"}
+              </button>
+            `
+            : ""
+        }
       </div>
     </section>
 
@@ -817,6 +840,7 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     const nextFingerprint = getRecordFingerprint(nextRecords)
     state.listeningPaused = settings.capturePaused
     state.deepCaptureEnabled = settings.deepCaptureEnabled
+    state.ignoredDomains = settings.ignoredDomains
 
     if (options?.silent && previousFingerprint === nextFingerprint) {
       return
@@ -1020,6 +1044,26 @@ const bindEvents = (): void => {
       render({ preservePanelScroll: true })
     })
   })
+
+  document
+    .querySelector<HTMLButtonElement>("#toggleIgnoreDomain")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement
+      const domain = button.dataset.domain
+
+      if (!domain) {
+        return
+      }
+
+      const ignoredDomains = state.ignoredDomains.includes(domain)
+        ? state.ignoredDomains.filter((item) => item !== domain)
+        : Array.from(new Set([...state.ignoredDomains, domain]))
+
+      const settings = await setCaptureSettings({ ignoredDomains })
+
+      state.ignoredDomains = settings.ignoredDomains
+      render({ preservePanelScroll: true })
+    })
 
   document.querySelector<HTMLButtonElement>("#copyDomain")?.addEventListener("click", async (event) => {
     const button = event.currentTarget as HTMLElement

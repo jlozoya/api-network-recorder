@@ -180,13 +180,13 @@ p {
   opacity: 0.66;
 }
 
-.actionButton[data-active="true"]:not(.danger) {
+button[data-active="true"]:not(.danger) {
   border-color: #a16207;
   color: #fef3c7;
   background: #422006;
 }
 
-.actionButton[data-active="true"]:not(.danger):hover {
+button[data-active="true"]:not(.danger):hover {
   background: #713f12;
 }
 
