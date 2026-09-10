@@ -1,10 +1,23 @@
 import type { ExtensionMessage, ExtensionResponse } from "../core/message-types.js"
-import type { NetworkRecord } from "../core/network-types.js"
+import type { NetworkRecordSummary } from "../core/network-summary.js"
+import { withTimeout } from "../core/async-utils.js"
 import type { CaptureLimit, CaptureSettings } from "../storage/capture-settings.js"
 import { normalizeIgnoredDomain } from "../storage/capture-settings.js"
 
 const sendMessage = async <T>(message: ExtensionMessage): Promise<T> => {
-  const response = (await chrome.runtime.sendMessage(message)) as ExtensionResponse<T>
+  const response = (await withTimeout(
+    chrome.runtime.sendMessage(message),
+    message.type === "CLEAR_RECORDS"
+      ? 35000
+      : ["START_DEBUGGER_CAPTURE", "START_DEBUGGER_CAPTURE_ALL", "STOP_DEBUGGER_CAPTURE"].includes(
+            message.type,
+          )
+        ? 30000
+        : 10000,
+    message.type,
+  )) as ExtensionResponse<T>
+
+  if (!response) throw new Error("The extension did not respond. Reload the extension and retry.")
 
   if (!response.ok) {
     throw new Error(response.error)
@@ -260,112 +273,129 @@ const renderIgnoredDomains = (settings: CaptureSettings): void => {
 
 interface CaptureStatusData {
   attached: boolean
+  enabled?: boolean
+  attachedCount?: number
+  pendingCount?: number
+  error?: string | null
   disabled: boolean
   busyText?: string
 }
 
-const fetchCaptureStatus = async (tab: CaptureTargetTab | null): Promise<CaptureStatusData> => {
+const fetchCaptureStatus = async (): Promise<CaptureStatusData> => {
   if (!__SUPPORTS_DEEP_CAPTURE__) {
     return { attached: false, disabled: false }
   }
 
-  if (!tab) {
-    return { attached: false, disabled: true, busyText: "Open a web tab" }
-  }
-
-  const status = await sendMessage<{ supported: boolean; attached: boolean }>({
+  const status = await sendMessage<{
+    supported: boolean
+    attached: boolean
+    enabled: boolean
+    attachedCount: number
+    pendingCount: number
+    error: string | null
+  }>({
     type: "GET_CAPTURE_STATUS",
-    payload: {
-      tabId: tab.id,
-    },
+    payload: {},
   })
 
   if (!status.supported) {
     return { attached: false, disabled: true, busyText: "Unsupported" }
   }
 
-  return { attached: status.attached, disabled: false }
+  return {
+    attached: status.attached,
+    enabled: status.enabled,
+    attachedCount: status.attachedCount,
+    pendingCount: status.pendingCount,
+    error: status.error,
+    disabled: false,
+  }
 }
 
 const applyCaptureStatus = (data: CaptureStatusData): boolean => {
+  const button = document.querySelector<HTMLButtonElement>("#toggleDeepCapture")
+  if (button) delete button.dataset.retry
+  const enabled = data.enabled ?? data.attached
   setCaptureBadge(data.attached)
+  if (!data.attached && enabled) {
+    setText(
+      "#captureBadge",
+      data.attachedCount
+        ? "Deep capture on other tabs"
+        : data.pendingCount
+          ? "Deep capture starting"
+          : data.error
+            ? "Deep capture not connected"
+            : "Deep capture waiting for tabs",
+    )
+  }
+  if (data.error) setError(data.error)
   setDeepCaptureButtonState(
-    data.attached,
-    data.busyText ? { disabled: data.disabled, busyText: data.busyText } : { disabled: data.disabled },
+    enabled,
+    data.busyText
+      ? { disabled: data.disabled, busyText: data.busyText }
+      : { disabled: data.disabled },
   )
 
-  return data.attached
+  return enabled
 }
 
-const buildSummaryText = (records: NetworkRecord[]): string => {
-  const apiRecords = records.filter((record) => {
-    const resourceType = record.resourceType?.toLowerCase() ?? ""
-    const mimeType = record.mimeType?.toLowerCase() ?? ""
-
-    return (
-      resourceType === "xmlhttprequest" ||
-      resourceType === "fetch" ||
-      resourceType === "xhr" ||
-      mimeType.includes("json")
-    )
-  })
-
-  const deepRecords = records.filter((record) => record.source === "debugger").length
-  const errors = records.filter((record) => record.error || record.status === null).length
-  const hosts = new Set(
-    records
-      .map((record) => {
-        try {
-          return new URL(record.url).host
-        } catch {
-          return null
-        }
-      })
-      .filter((host): host is string => Boolean(host)),
+const buildSummaryText = (summary: NetworkRecordSummary): string => {
+  return (
+    summary.total +
+    " stored records. " +
+    summary.api +
+    " API-like. " +
+    summary.deep +
+    " deep. " +
+    summary.errors +
+    " errors. " +
+    summary.hosts +
+    " hosts."
   )
-
-  return `${records.length} stored records. ${apiRecords.length} API-like. ${deepRecords} deep. ${errors} errors. ${hosts.size} hosts.`
 }
 
 const refresh = async (options?: { clearError?: boolean }): Promise<void> => {
-  try {
-    const tab = await getCaptureTargetTab()
-
-    // Fetch everything before touching the DOM so the popup's layout
-    // settles in a single pass instead of resizing once per response.
-    const [records, settings, captureStatus] = await Promise.all([
-      sendMessage<NetworkRecord[]>({
-        type: "GET_RECORDS",
-        payload: {
-          limit: 1000,
-          apiOnly: false,
-        },
-      }),
-      sendMessage<CaptureSettings>({
-        type: "GET_CAPTURE_SETTINGS",
-      }),
-      fetchCaptureStatus(tab),
-    ])
-
-    if (options?.clearError ?? true) {
-      setError(null)
-    }
-
-    setText("#summary", buildSummaryText(records))
-
-    const select = document.querySelector<HTMLSelectElement>("#captureLimit")
-
-    if (select) {
-      select.value = String(settings.captureLimit)
-    }
-
-    setIgnoredTabButtonState(settings, tab)
-    setIgnoreDomainButtonState(settings, tab)
-    renderIgnoredDomains(settings)
-    applyCaptureStatus(captureStatus)
-  } catch (error) {
-    setError(error instanceof Error ? error.message : String(error))
+  if (options?.clearError ?? true) setError(null)
+  const errors: string[] = []
+  const report = (error: unknown): void => {
+    errors.push(error instanceof Error ? error.message : String(error))
+    setError(errors.join("\n"))
   }
+  const tabPromise = withTimeout(getCaptureTargetTab(), 10000, "Tab lookup")
+  const settingsPromise = sendMessage<CaptureSettings>({ type: "GET_CAPTURE_SETTINGS" })
+
+  // Each section renders as soon as it is ready. A slow DB must not hide capture status.
+  await Promise.all([
+    sendMessage<NetworkRecordSummary>({ type: "GET_RECORD_SUMMARY" })
+      .then((summary) => setText("#summary", buildSummaryText(summary)))
+      .catch((error: unknown) => {
+        setText("#summary", "Record summary unavailable.")
+        report(error)
+      }),
+    Promise.all([settingsPromise, tabPromise])
+      .then(([settings, tab]) => {
+        const select = document.querySelector<HTMLSelectElement>("#captureLimit")
+        if (select) select.value = String(settings.captureLimit)
+        setIgnoredTabButtonState(settings, tab)
+        setIgnoreDomainButtonState(settings, tab)
+        renderIgnoredDomains(settings)
+      })
+      .catch((error: unknown) => {
+        setText("#toggleIgnoreTab", "Tab settings unavailable")
+        setText("#toggleIgnoreDomain", "Domain settings unavailable")
+        report(error)
+      }),
+    fetchCaptureStatus()
+      .then(applyCaptureStatus)
+      .catch((error: unknown) => {
+        setText("#captureBadge", "Status unavailable")
+        setDeepCaptureButtonState(false, { busyText: "Retry capture status" })
+        const button = document.querySelector<HTMLButtonElement>("#toggleDeepCapture")
+        if (button) button.dataset.retry = "true"
+        report(error)
+      }),
+  ])
 }
 
 const refreshAfterClearTimeout = async (): Promise<void> => {
@@ -415,6 +445,10 @@ document.querySelector("#clear")?.addEventListener("click", async () => {
 })
 
 document.querySelector("#toggleDeepCapture")?.addEventListener("click", async () => {
+  if (document.querySelector<HTMLButtonElement>("#toggleDeepCapture")?.dataset.retry === "true") {
+    await refresh()
+    return
+  }
   if (!__SUPPORTS_DEEP_CAPTURE__) {
     return
   }
@@ -422,13 +456,7 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
   try {
     setError(null)
 
-    const tab = await getCaptureTargetTab()
-
-    if (!tab) {
-      throw new Error("Open an http/https page before starting deep capture.")
-    }
-
-    const isAttached = applyCaptureStatus(await fetchCaptureStatus(tab))
+    const isAttached = applyCaptureStatus(await fetchCaptureStatus())
 
     setDeepCaptureButtonState(isAttached, {
       disabled: true,
@@ -438,16 +466,10 @@ document.querySelector("#toggleDeepCapture")?.addEventListener("click", async ()
     if (isAttached) {
       await sendMessage<null>({
         type: "STOP_DEBUGGER_CAPTURE",
-        payload: {
-          tabId: tab.id,
-        },
       })
     } else {
       await sendMessage<null>({
-        type: "START_DEBUGGER_CAPTURE",
-        payload: {
-          tabId: tab.id,
-        },
+        type: "START_DEBUGGER_CAPTURE_ALL",
       })
     }
 

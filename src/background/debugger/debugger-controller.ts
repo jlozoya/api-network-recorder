@@ -1,3 +1,4 @@
+import { withTimeout } from "../../core/async-utils.js"
 import {
   getCaptureSettings,
   isUrlIgnoredByDomains,
@@ -6,7 +7,9 @@ import {
 import { handleDebuggerEvent } from "./debugger-events.js"
 
 const attachedTabs = new Set<number>()
-const pendingAttachTabs = new Set<number>()
+const pendingAttachTabs = new Map<number, Promise<void>>()
+let captureGeneration = 0
+const captureErrors = new Map<number, string>()
 let deepCaptureEnabled = false
 let stoppingDebuggerCaptureForAllTabs = false
 
@@ -58,39 +61,52 @@ const getCapturableTabs = async (): Promise<Array<chrome.tabs.Tab & { id: number
   })
 }
 
-const refreshAttachedTabsFromDebugger = async (): Promise<void> => {
+const refreshAttachedTabsFromDebugger = async (tabId?: number): Promise<void> => {
   const activeDebuggerApi = getDebuggerApi()
-
   if (!activeDebuggerApi) {
     attachedTabs.clear()
     return
   }
-
-  const targets = await activeDebuggerApi.getTargets()
-  const verifiedTabs = new Set<number>()
-
-  for (const target of targets) {
-    if (!target.attached || typeof target.tabId !== "number" || !isCapturableUrl(target.url)) {
-      continue
-    }
-
-    try {
-      await activeDebuggerApi.sendCommand(
-        { tabId: target.tabId },
-        "Network.enable",
-        NETWORK_ENABLE_OPTIONS,
-      )
-      verifiedTabs.add(target.tabId)
-    } catch {
-      // Another debugger may own this target. Only track tabs this extension can command.
+  // onDetach keeps known sessions current. Checking a popup must not re-enable Network
+  // on every tab, or wait for an unrelated tab's debugger to respond.
+  if (typeof tabId === "number" && attachedTabs.has(tabId)) return
+  const knownTabs = new Set(attachedTabs)
+  const targets = await withTimeout(activeDebuggerApi.getTargets(), 3000, "Debugger targets")
+  const candidates = targets.filter(
+    (target) =>
+      target.attached &&
+      typeof target.tabId === "number" &&
+      isCapturableUrl(target.url) &&
+      (tabId === undefined || target.tabId === tabId),
+  )
+  for (const knownTab of knownTabs) {
+    if (
+      (tabId === undefined || knownTab === tabId) &&
+      !candidates.some((target) => target.tabId === knownTab)
+    ) {
+      attachedTabs.delete(knownTab)
     }
   }
-
-  attachedTabs.clear()
-
-  for (const tabId of verifiedTabs) {
-    attachedTabs.add(tabId)
-  }
+  await Promise.all(
+    candidates.map(async (target) => {
+      const targetTabId = target.tabId!
+      if (attachedTabs.has(targetTabId)) return
+      try {
+        await withTimeout(
+          activeDebuggerApi.sendCommand(
+            { tabId: targetTabId },
+            "Network.enable",
+            NETWORK_ENABLE_OPTIONS,
+          ),
+          3000,
+          "Debugger session check",
+        )
+        attachedTabs.add(targetTabId)
+      } catch {
+        // Other debuggers may own these targets. Only track sessions we can command.
+      }
+    }),
+  )
 }
 
 if (debuggerApi) {
@@ -99,7 +115,10 @@ if (debuggerApi) {
       return
     }
 
-    void handleDebuggerEvent(source.tabId, method, params)
+    const tabId = source.tabId
+    void handleDebuggerEvent(tabId, method, params).catch((error: unknown) => {
+      captureErrors.set(tabId, error instanceof Error ? error.message : String(error))
+    })
   })
 
   debuggerApi.onDetach.addListener((source, reason) => {
@@ -138,47 +157,70 @@ if (debuggerApi) {
     })
 }
 
-const attachDebuggerToTab = async (tabId: number): Promise<void> => {
+const connectDebuggerToTab = async (tabId: number, generation: number): Promise<void> => {
   const activeDebuggerApi = getDebuggerApi()
+  if (!activeDebuggerApi) throw new Error("Deep capture is not supported in this browser.")
 
-  if (!activeDebuggerApi) {
-    throw new Error("Deep capture is not supported in this browser.")
-  }
-
-  await refreshAttachedTabsFromDebugger()
-
-  if (attachedTabs.has(tabId) || pendingAttachTabs.has(tabId)) {
-    return
-  }
-
-  const tab = await getTab(tabId)
-
-  if (!isCapturableUrl(tab?.url)) {
+  const [tab, settings] = await withTimeout(
+    Promise.all([getTab(tabId), getCaptureSettings()]),
+    3000,
+    "Capture tab lookup",
+  )
+  if (!tab || !isCapturableUrl(tab.url))
     throw new Error("Deep capture only works on http/https tabs.")
-  }
-
-  const settings = await getCaptureSettings()
-
   if (
     settings.ignoredTabIds.includes(tabId) ||
-    isUrlIgnoredByDomains(tab?.url, settings.ignoredDomains)
+    isUrlIgnoredByDomains(tab.url, settings.ignoredDomains)
   ) {
-    return
+    throw new Error("This tab is ignored. Remove its ignore rule before starting deep capture.")
   }
-
-  pendingAttachTabs.add(tabId)
+  await refreshAttachedTabsFromDebugger(tabId)
+  if (generation !== captureGeneration) throw new Error("Deep capture was stopped.")
+  if (attachedTabs.has(tabId)) return
 
   const target: chrome.debugger.Debuggee = { tabId }
-
+  let expired = false
+  let ownsTarget = false
+  const attaching = activeDebuggerApi.attach(target, "1.3").then(async () => {
+    ownsTarget = true
+    if (expired || generation !== captureGeneration) {
+      await activeDebuggerApi.detach(target).catch(() => {})
+      throw new Error("Deep capture was stopped before the connection completed.")
+    }
+  })
   try {
-    await activeDebuggerApi.attach(target, "1.3")
-
+    await withTimeout(attaching, 5000, "Debugger attach for tab " + tabId)
+    await withTimeout(
+      activeDebuggerApi.sendCommand(target, "Network.enable", NETWORK_ENABLE_OPTIONS),
+      5000,
+      "Network.enable for tab " + tabId,
+    )
+    if (generation !== captureGeneration) throw new Error("Deep capture was stopped.")
     attachedTabs.add(tabId)
-
-    await activeDebuggerApi.sendCommand(target, "Network.enable", NETWORK_ENABLE_OPTIONS)
-  } finally {
-    pendingAttachTabs.delete(tabId)
+  } catch (error) {
+    expired = true
+    attachedTabs.delete(tabId)
+    if (ownsTarget)
+      await withTimeout(activeDebuggerApi.detach(target), 3000, "Debugger cleanup").catch(() => {})
+    throw error
   }
+}
+
+const attachDebuggerToTab = (tabId: number): Promise<void> => {
+  if (attachedTabs.has(tabId)) return Promise.resolve()
+  const pending = pendingAttachTabs.get(tabId)
+  if (pending) return pending
+  captureErrors.delete(tabId)
+  const operation = connectDebuggerToTab(tabId, captureGeneration)
+    .catch((error: unknown) => {
+      captureErrors.set(tabId, error instanceof Error ? error.message : String(error))
+      throw error
+    })
+    .finally(() => {
+      if (pendingAttachTabs.get(tabId) === operation) pendingAttachTabs.delete(tabId)
+    })
+  pendingAttachTabs.set(tabId, operation)
+  return operation
 }
 
 export const startDebuggerCaptureForAllTabs = async (): Promise<void> => {
@@ -188,33 +230,44 @@ export const startDebuggerCaptureForAllTabs = async (): Promise<void> => {
     throw new Error("Deep capture is not supported in this browser.")
   }
 
-  await refreshAttachedTabsFromDebugger()
-
-  const tabs = await getCapturableTabs()
-  const failures: string[] = []
-
-  for (const tab of tabs) {
-    try {
-      await attachDebuggerToTab(tab.id)
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error))
-    }
-  }
-
-  if (failures.length === tabs.length && tabs.length > 0) {
-    throw new Error(failures[0] ?? "Unable to start deep capture.")
+  const [availableTabs, settings] = await Promise.all([getCapturableTabs(), getCaptureSettings()])
+  const tabs = availableTabs.filter(
+    (tab) =>
+      !settings.ignoredTabIds.includes(tab.id) &&
+      !isUrlIgnoredByDomains(tab.url, settings.ignoredDomains),
+  )
+  // Keep the global switch enabled for future eligible tabs, even when all current tabs are ignored.
+  if (!tabs.length) return
+  const results = await Promise.allSettled(tabs.map((tab) => attachDebuggerToTab(tab.id)))
+  const successful = results.some((result) => result.status === "fulfilled")
+  if (!successful) {
+    const failed = results.find((result) => result.status === "rejected")
+    throw failed?.reason ?? new Error("Unable to start deep capture.")
   }
 }
 
 export const startDebuggerCapture = async (tabId: number): Promise<void> => {
+  const generation = captureGeneration
   await attachDebuggerToTab(tabId)
+  if (generation !== captureGeneration) throw new Error("Deep capture was stopped.")
   await setDeepCaptureEnabled(true)
-  await startDebuggerCaptureForAllTabs()
+  // Confirm the chosen tab immediately; slow unrelated tabs must not delay this reply.
+  void startDebuggerCaptureForAllTabs().catch((error: unknown) => {
+    console.warn("[API Network Recorder] Additional tabs could not start deep capture.", error)
+  })
 }
 
 export const startDebuggerCaptureForAllAvailableTabs = async (): Promise<void> => {
+  const wasEnabled = deepCaptureEnabled
+  captureErrors.clear()
+  const generation = captureGeneration
   await setDeepCaptureEnabled(true)
-  await startDebuggerCaptureForAllTabs()
+  try {
+    await startDebuggerCaptureForAllTabs()
+  } catch (error) {
+    if (generation === captureGeneration) await setDeepCaptureEnabled(wasEnabled)
+    throw error
+  }
 }
 
 export const stopDebuggerCapture = async (tabId: number): Promise<void> => {
@@ -237,7 +290,7 @@ export const stopDebuggerCapture = async (tabId: number): Promise<void> => {
   const target: chrome.debugger.Debuggee = { tabId }
 
   try {
-    await activeDebuggerApi.detach(target)
+    await withTimeout(activeDebuggerApi.detach(target), 3000, "Debugger detach for tab " + tabId)
   } finally {
     attachedTabs.delete(tabId)
     pendingAttachTabs.delete(tabId)
@@ -250,21 +303,24 @@ export const stopDebuggerCaptureForAllTabs = async (): Promise<void> => {
   }
 
   stoppingDebuggerCaptureForAllTabs = true
+  captureGeneration += 1
 
   try {
     await setDeepCaptureEnabled(false)
+    await Promise.allSettled([...pendingAttachTabs.values()])
     await refreshAttachedTabsFromDebugger().catch(() => {
       attachedTabs.clear()
     })
 
     const tabIds = Array.from(attachedTabs)
 
-    for (const tabId of tabIds) {
-      await stopDebuggerCapture(tabId).catch(() => {
-        attachedTabs.delete(tabId)
-        pendingAttachTabs.delete(tabId)
-      })
-    }
+    await Promise.all(
+      tabIds.map((tabId) =>
+        stopDebuggerCapture(tabId).catch(() => {
+          attachedTabs.delete(tabId)
+        }),
+      ),
+    )
   } finally {
     stoppingDebuggerCaptureForAllTabs = false
   }
@@ -287,26 +343,36 @@ export const isDebuggerAttached = (tabId: number): boolean => {
 }
 
 export const getDebuggerCaptureStatus = (
-  tabId: number,
+  tabId?: number,
 ): {
   supported: boolean
   attached: boolean
+  enabled: boolean
+  attachedCount: number
+  pendingCount: number
+  error: string | null
 } => {
   return {
     supported: isDebuggerCaptureSupported(),
-    attached: deepCaptureEnabled || isDebuggerAttached(tabId),
+    attached: tabId === undefined ? attachedTabs.size > 0 : isDebuggerAttached(tabId),
+    enabled: deepCaptureEnabled || attachedTabs.size > 0,
+    attachedCount: attachedTabs.size,
+    pendingCount: pendingAttachTabs.size,
+    error:
+      tabId === undefined
+        ? attachedTabs.size
+          ? null
+          : (captureErrors.values().next().value ?? null)
+        : (captureErrors.get(tabId) ?? null),
   }
 }
 
 export const getFreshDebuggerCaptureStatus = async (
-  tabId: number,
-): Promise<{
-  supported: boolean
-  attached: boolean
-}> => {
+  tabId?: number,
+): Promise<ReturnType<typeof getDebuggerCaptureStatus>> => {
   if (isDebuggerCaptureSupported()) {
-    await refreshAttachedTabsFromDebugger().catch(() => {
-      attachedTabs.delete(tabId)
+    await refreshAttachedTabsFromDebugger(tabId).catch(() => {
+      if (tabId !== undefined) attachedTabs.delete(tabId)
     })
   }
 

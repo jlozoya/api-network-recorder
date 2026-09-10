@@ -1,16 +1,14 @@
 import {
-  isTextLikeContentType,
-  toCapturedBinaryBody,
   toCapturedBodyFromBytes,
   toCapturedTextBody,
   unavailableBody,
 } from "../../core/body-utils.js"
-import { MAX_BODY_SIZE_BYTES } from "../../core/constants.js"
+import { BodyBuffer } from "../../core/body-buffer.js"
 import { normalizeEndpointPath } from "../../core/endpoint-utils.js"
 import type { CapturedBody, HeaderMap, NetworkRecord } from "../../core/network-types.js"
 import { redactHeaders } from "../../core/redaction.js"
 import { saveNetworkRecord } from "../../storage/network-record-repository.js"
-import { isDebuggerAttached, isDeepCaptureEnabled } from "../debugger/debugger-controller.js"
+import { isDebuggerAttached } from "../debugger/debugger-controller.js"
 
 interface PendingWebRequest {
   requestId: string
@@ -63,7 +61,7 @@ const isCapturableTab = (tabId: number): boolean => {
 }
 
 const shouldSkipSilentCapture = (tabId: number): boolean => {
-  return isCapturableTab(tabId) && (isDeepCaptureEnabled() || isDebuggerAttached(tabId))
+  return isCapturableTab(tabId) && isDebuggerAttached(tabId)
 }
 
 const supportsFirefoxResponseFiltering = (): boolean => {
@@ -128,39 +126,6 @@ const getStatusText = (statusLine?: string): string | null => {
 
   const parts = statusLine.split(" ")
   return parts.slice(2).join(" ") || statusLine
-}
-
-const concatChunks = (chunks: Uint8Array[], sizeBytes: number): Uint8Array => {
-  const output = new Uint8Array(Math.min(sizeBytes, MAX_BODY_SIZE_BYTES))
-  let offset = 0
-
-  for (const chunk of chunks) {
-    const available = output.length - offset
-
-    if (available <= 0) {
-      break
-    }
-
-    const slice = chunk.slice(0, available)
-    output.set(slice, offset)
-    offset += slice.length
-  }
-
-  return output
-}
-
-const responseBodyFromBytes = (
-  bytes: Uint8Array,
-  sizeBytes: number,
-  contentType?: string | null,
-): CapturedBody => {
-  const normalizedContentType = contentType?.toLowerCase() ?? ""
-
-  if (!normalizedContentType || isTextLikeContentType(normalizedContentType)) {
-    return toCapturedBodyFromBytes(bytes, normalizedContentType)
-  }
-
-  return toCapturedBinaryBody(bytes, sizeBytes)
 }
 
 const withResponseBodyTimeout = (promise: Promise<void>): Promise<void> => {
@@ -325,29 +290,22 @@ const startFirefoxResponseBodyCapture = (pending: PendingWebRequest): void => {
     return
   }
 
-  const chunks: Uint8Array[] = []
-  let sizeBytes = 0
+  const buffer = new BodyBuffer()
 
   try {
     const filter = filterResponseData(pending.requestId)
 
     pending.responseBodyPromise = new Promise<void>((resolve) => {
       filter.ondata = (event) => {
-        const chunk = new Uint8Array(event.data)
-        sizeBytes += chunk.byteLength
-
-        if (concatChunks(chunks, sizeBytes).length < MAX_BODY_SIZE_BYTES) {
-          chunks.push(chunk)
-        }
-
+        buffer.append(new Uint8Array(event.data))
         filter.write(event.data)
       }
 
       filter.onstop = () => {
-        pending.responseBody = responseBodyFromBytes(
-          concatChunks(chunks, sizeBytes),
-          sizeBytes,
+        pending.responseBody = toCapturedBodyFromBytes(
+          buffer.toBytes(),
           pending.mimeType,
+          buffer.sizeBytes,
         )
         filter.close()
         resolve()

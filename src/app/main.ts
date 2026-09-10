@@ -828,6 +828,11 @@ const render = (options?: RenderOptions): void => {
 const reload = async (options?: { silent?: boolean }): Promise<void> => {
   try {
     const previousFingerprint = getRecordFingerprint(state.records)
+    const previousSettings = JSON.stringify([
+      state.listeningPaused,
+      state.deepCaptureEnabled,
+      state.ignoredDomains,
+    ])
 
     if (!options?.silent) {
       state.loading = true
@@ -842,7 +847,16 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     state.deepCaptureEnabled = settings.deepCaptureEnabled
     state.ignoredDomains = settings.ignoredDomains
 
-    if (options?.silent && previousFingerprint === nextFingerprint) {
+    const settingsChanged =
+      previousSettings !==
+      JSON.stringify([state.listeningPaused, state.deepCaptureEnabled, state.ignoredDomains])
+    if (
+      options?.silent &&
+      previousFingerprint === nextFingerprint &&
+      !settingsChanged &&
+      !state.loading &&
+      !state.error
+    ) {
       return
     }
 
@@ -940,6 +954,7 @@ const bindEvents = (): void => {
     })
       .then(async () => {
         state.deepCaptureBusy = false
+        render({ preservePanelScroll: true })
         await reload({ silent: true })
       })
       .catch((error: unknown) => {

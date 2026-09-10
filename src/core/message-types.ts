@@ -12,6 +12,7 @@ export interface ListNetworkRecordsPayload {
 }
 
 export type ExtensionMessage =
+  | { type: "GET_RECORD_SUMMARY" }
   | {
       type: "NETWORK_RECORD_CREATED"
       payload: Omit<NetworkRecord, "tabId">
@@ -51,7 +52,7 @@ export type ExtensionMessage =
   | {
       type: "GET_CAPTURE_STATUS"
       payload: {
-        tabId: number
+        tabId?: number
       }
     }
 

@@ -17,11 +17,15 @@ export const isTextLikeContentType = (contentType: string): boolean => {
 }
 
 const truncateText = (value: string): { value: string; truncated: boolean; sizeBytes: number } => {
-  const sizeBytes = encoder.encode(value).length
+  const bytes = encoder.encode(value)
+  const sizeBytes = bytes.length
   const truncated = sizeBytes > MAX_BODY_SIZE_BYTES
 
   return {
-    value: truncated ? value.slice(0, MAX_BODY_SIZE_BYTES) : value,
+    // Omit an incomplete final UTF-8 character instead of adding a replacement character.
+    value: truncated
+      ? new TextDecoder().decode(bytes.subarray(0, MAX_BODY_SIZE_BYTES), { stream: true })
+      : value,
     truncated,
     sizeBytes,
   }
@@ -80,27 +84,48 @@ export const toCapturedBinaryBody = (
   }
 }
 
+export const toCapturedBase64Body = (value: string): CapturedBody => {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
+  const sizeBytes = Math.floor((value.length * 3) / 4) - padding
+  const prefix = atob(value.slice(0, Math.ceil(MAX_BODY_SIZE_BYTES / 3) * 4))
+  const bytes = Uint8Array.from(prefix, (character) => character.charCodeAt(0))
+  return toCapturedBinaryBody(bytes, sizeBytes)
+}
+
 export const toCapturedBodyFromBytes = (
   bytes: ArrayBuffer | Uint8Array,
   contentType?: string | null,
+  sizeBytes?: number,
 ): CapturedBody => {
   const normalizedContentType = contentType?.toLowerCase() ?? ""
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const originalSize = Math.max(sizeBytes ?? view.byteLength, view.byteLength)
+  const safeView = view.subarray(0, MAX_BODY_SIZE_BYTES)
 
   if (normalizedContentType && !isTextLikeContentType(normalizedContentType)) {
-    return toCapturedBinaryBody(view)
+    return toCapturedBinaryBody(safeView, originalSize)
   }
 
   try {
-    const text = decoder.decode(view)
+    const text =
+      originalSize > safeView.byteLength
+        ? new TextDecoder().decode(safeView, { stream: true })
+        : decoder.decode(safeView)
 
     if (looksLikeBinaryText(text)) {
-      return toCapturedBinaryBody(view)
+      return toCapturedBinaryBody(safeView, originalSize)
     }
 
-    return toCapturedTextBody(text, normalizedContentType)
+    const body = toCapturedTextBody(text, normalizedContentType)
+    return body.kind === "unavailable"
+      ? body
+      : {
+          ...body,
+          sizeBytes: originalSize,
+          truncated: body.truncated || originalSize > safeView.byteLength,
+        }
   } catch {
-    return toCapturedBinaryBody(view)
+    return toCapturedBinaryBody(safeView, originalSize)
   }
 }
 

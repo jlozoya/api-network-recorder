@@ -19,7 +19,17 @@ const isNetworkRecordMessage = (
     payload?: unknown
   }
 
-  return message.type === "NETWORK_RECORD_CREATED" && Boolean(message.payload)
+  if (
+    message.type !== "NETWORK_RECORD_CREATED" ||
+    !message.payload ||
+    typeof message.payload !== "object" ||
+    Array.isArray(message.payload)
+  )
+    return false
+
+  // Keep this entry self-contained: manifest content scripts cannot import ES modules.
+  // The background applies the complete schema before storing a record.
+  return new TextEncoder().encode(JSON.stringify(message.payload)).length <= 6 * 1024 * 1024
 }
 
 const isExtensionEnvelope = (value: unknown): value is ExtensionEnvelope => {

@@ -1,9 +1,11 @@
+import { isPageNetworkRecordMessage } from "../../core/record-validation.js"
 import type { CaptureSettings } from "../../storage/capture-settings.js"
 import { getCaptureSettings, setCaptureSettings } from "../../storage/capture-settings.js"
 import type { ExtensionMessage, ExtensionResponse } from "../../core/message-types.js"
 import type { NetworkRecord } from "../../core/network-types.js"
 import {
   clearNetworkRecords,
+  getNetworkRecordSummary,
   listNetworkRecords,
   saveNetworkRecord,
 } from "../../storage/network-record-repository.js"
@@ -60,10 +62,25 @@ chrome.runtime.onMessage.addListener(
     sender,
     sendResponse: (response: ExtensionResponse) => void,
   ): boolean => {
+    if (!message || typeof message !== "object") return false
+
     if (message.type === "NETWORK_RECORD_CREATED") {
+      if (
+        !isPageNetworkRecordMessage(message) ||
+        typeof sender.tab?.id !== "number" ||
+        !sender.url
+      ) {
+        sendResponse({ ok: false, error: "Invalid page network record" })
+        return false
+      }
       const record: NetworkRecord = {
         ...message.payload,
-        tabId: sender.tab?.id ?? null,
+        // Page data cannot choose a database key or impersonate a different frame.
+        id: crypto.randomUUID(),
+        tabId: sender.tab.id,
+        frameId: sender.frameId ?? null,
+        pageUrl: sender.url,
+        origin: sender.origin ?? new URL(sender.url).origin,
       }
 
       respond(
@@ -71,6 +88,11 @@ chrome.runtime.onMessage.addListener(
         saveNetworkRecord(record).then(() => null),
         message.type,
       )
+      return true
+    }
+
+    if (message.type === "GET_RECORD_SUMMARY") {
+      respond(sendResponse, getNetworkRecordSummary(), message.type)
       return true
     }
 
@@ -118,6 +140,7 @@ chrome.runtime.onMessage.addListener(
         sendResponse,
         startDebuggerCapture(message.payload.tabId).then(() => null),
         message.type,
+        25000,
       )
       return true
     }
@@ -127,6 +150,7 @@ chrome.runtime.onMessage.addListener(
         sendResponse,
         startDebuggerCaptureForAllAvailableTabs().then(() => null),
         message.type,
+        25000,
       )
       return true
     }
@@ -136,6 +160,7 @@ chrome.runtime.onMessage.addListener(
         sendResponse,
         stopDebuggerCaptureForAllTabs().then(() => null),
         message.type,
+        25000,
       )
       return true
     }

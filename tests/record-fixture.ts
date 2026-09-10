@@ -1,0 +1,20 @@
+export const pageMessage = () => ({
+  type: "NETWORK_RECORD_CREATED",
+  payload: {
+    id: "page-id",
+    source: "fetch",
+    pageUrl: "https://example.test/page",
+    origin: "https://example.test",
+    method: "POST",
+    url: "https://example.test/api/items",
+    requestHeaders: { "content-type": "application/json" },
+    requestBody: { kind: "json", value: { greeting: "hola" }, truncated: false, sizeBytes: 19 },
+    status: 200,
+    statusText: "OK",
+    responseHeaders: {},
+    responseBody: { kind: "text", value: "ok", truncated: false, sizeBytes: 2 },
+    startedAt: "2026-09-10T00:00:00.000Z",
+    completedAt: "2026-09-10T00:00:01.000Z",
+    durationMs: 1000,
+  },
+})

@@ -119,11 +119,14 @@ export const redactHeaders = (headers: HeaderMap): HeaderMap => {
 
 const truncateText = (value: unknown): { value: string; truncated: boolean; sizeBytes: number } => {
   const text = toSafeText(value)
-  const sizeBytes = encoder.encode(text).length
+  const bytes = encoder.encode(text)
+  const sizeBytes = bytes.length
   const truncated = sizeBytes > MAX_BODY_SIZE_BYTES
 
   return {
-    value: truncated ? text.slice(0, MAX_BODY_SIZE_BYTES) : text,
+    value: truncated
+      ? new TextDecoder().decode(bytes.subarray(0, MAX_BODY_SIZE_BYTES), { stream: true })
+      : text,
     truncated,
     sizeBytes,
   }

@@ -1,6 +1,6 @@
 {
   "name": "api-network-recorder",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "package": "bun run build && bun scripts/package-extension.ts",
     "package:chrome": "bun run build:chrome && cross-env BROWSER_TARGET=chrome bun scripts/package-extension.ts",
     "package:firefox": "bun run build:firefox && cross-env BROWSER_TARGET=firefox bun scripts/package-extension.ts",
-    "package:source": "bun scripts/package-source.ts"
+    "package:source": "bun scripts/package-source.ts",
+    "test": "bun test",
+    "test:browser": "bun run build:chrome && bun scripts/smoke-deep-capture.ts"
   },
   "dependencies": {
     "idb": "^8.0.0"

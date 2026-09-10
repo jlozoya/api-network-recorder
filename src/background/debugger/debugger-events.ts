@@ -1,4 +1,5 @@
-import { toCapturedTextBody, unavailableBody } from "../../core/body-utils.js"
+import { withTimeout } from "../../core/async-utils.js"
+import { toCapturedBase64Body, toCapturedTextBody, unavailableBody } from "../../core/body-utils.js"
 import type { HeaderMap, NetworkRecord } from "../../core/network-types.js"
 import { normalizeEndpointPath } from "../../core/endpoint-utils.js"
 import { redactHeaders } from "../../core/redaction.js"
@@ -192,12 +193,10 @@ export const handleDebuggerEvent = async (
     let responseBody: NetworkRecord["responseBody"] = unavailableBody("Response body unavailable")
 
     try {
-      const result = await chrome.debugger.sendCommand(
-        { tabId },
+      const result = await withTimeout(
+        chrome.debugger.sendCommand({ tabId }, "Network.getResponseBody", { requestId }),
+        5000,
         "Network.getResponseBody",
-        {
-          requestId,
-        },
       )
 
       const bodyResult = result as {
@@ -206,17 +205,14 @@ export const handleDebuggerEvent = async (
       }
 
       if (bodyResult.base64Encoded) {
-        responseBody = {
-          kind: "binary",
-          value: bodyResult.body ?? "",
-          truncated: false,
-          sizeBytes: bodyResult.body?.length ?? 0,
-        }
+        responseBody = toCapturedBase64Body(bodyResult.body ?? "")
       } else {
         responseBody = toCapturedTextBody(bodyResult.body ?? "", pending.mimeType ?? undefined)
       }
-    } catch {
-      responseBody = unavailableBody("Chrome debugger could not read response body")
+    } catch (error) {
+      responseBody = unavailableBody(
+        error instanceof Error ? error.message : "Chrome debugger could not read response body",
+      )
     }
 
     const encodedDataLength = getNumber(event.encodedDataLength)

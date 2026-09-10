@@ -1,3 +1,4 @@
+import { createNetworkRecordSummary, type NetworkRecordSummary } from "../core/network-summary.js"
 import type { ListNetworkRecordsPayload } from "../core/message-types.js"
 import { isProbablyApiRecord } from "../core/endpoint-utils.js"
 import type { NetworkRecord } from "../core/network-types.js"
@@ -238,4 +239,20 @@ export const listNetworkRecords = async (
 export const clearNetworkRecords = async (): Promise<void> => {
   const db = await getDb()
   await db.clear("networkRecords")
+}
+
+// The popup only needs counts. Never send request/response bodies through runtime messaging.
+export const getNetworkRecordSummary = async (): Promise<NetworkRecordSummary> => {
+  const settings = await getCaptureSettings()
+  const db = await getDb()
+  const result = createNetworkRecordSummary()
+  let cursor = await db
+    .transaction("networkRecords")
+    .store.index("by-startedAt")
+    .openCursor(null, "prev")
+  while (cursor && result.summary.total < settings.captureLimit) {
+    result.add(cursor.value)
+    cursor = await cursor.continue()
+  }
+  return result.summary
 }
