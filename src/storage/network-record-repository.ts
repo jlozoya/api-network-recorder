@@ -1,3 +1,8 @@
+import {
+  toRecordPreview,
+  type NetworkRecordPreview,
+  type SavedSession,
+} from "../core/record-preview.js"
 import { createNetworkRecordSummary, type NetworkRecordSummary } from "../core/network-summary.js"
 import type { ListNetworkRecordsPayload } from "../core/message-types.js"
 import { isProbablyApiRecord } from "../core/endpoint-utils.js"
@@ -19,27 +24,31 @@ interface NetworkRecordFilters {
   search: string | undefined
 }
 
-const trimNetworkRecords = async (): Promise<void> => {
+export const trimNetworkRecords = async (): Promise<void> => {
   const settings = await getCaptureSettings()
   const db = await getDb()
-  const count = await db.count("networkRecords")
-  const excess = count - settings.captureLimit
+  const transaction = db.transaction(["networkRecords", "recordPreviews"], "readwrite")
+  // Walk newest first; pinned records do not consume the rolling capture allowance.
+  let cursor = await transaction
+    .objectStore("recordPreviews")
+    .index("by-startedAt")
+    .openCursor(null, "prev")
+  let retainedApi = 0
+  let retainedOther = 0
+  while (cursor) {
+    if (!cursor.value.pinned) {
+      // API-like records get their own allowance. Page assets (scripts, images,
+      // fonts) burn through a shared budget in seconds, which would delete the
+      // requests the inspector is showing while they are still on screen.
+      const retained = isProbablyApiRecord(cursor.value) ? ++retainedApi : ++retainedOther
 
-  if (excess <= 0) {
-    return
-  }
-
-  const transaction = db.transaction("networkRecords", "readwrite")
-  const index = transaction.store.index("by-startedAt")
-  let cursor = await index.openCursor()
-  let deleted = 0
-
-  while (cursor && deleted < excess) {
-    await cursor.delete()
-    deleted += 1
+      if (retained > settings.captureLimit) {
+        await transaction.objectStore("networkRecords").delete(cursor.value.id)
+        await cursor.delete()
+      }
+    }
     cursor = await cursor.continue()
   }
-
   await transaction.done
 }
 
@@ -85,7 +94,11 @@ export const saveNetworkRecord = async (record: NetworkRecord): Promise<void> =>
   }
 
   const db = await getDb()
-  await db.put("networkRecords", record)
+  const transaction = db.transaction(["networkRecords", "recordPreviews"], "readwrite")
+  const previous = await transaction.objectStore("recordPreviews").get(record.id)
+  await transaction.objectStore("networkRecords").put(record)
+  await transaction.objectStore("recordPreviews").put(toRecordPreview(record, previous?.pinned))
+  await transaction.done
   await maybeTrimNetworkRecords()
 }
 
@@ -238,21 +251,172 @@ export const listNetworkRecords = async (
 
 export const clearNetworkRecords = async (): Promise<void> => {
   const db = await getDb()
-  await db.clear("networkRecords")
+  const transaction = db.transaction(["networkRecords", "recordPreviews"], "readwrite")
+  let cursor = await transaction.objectStore("recordPreviews").openCursor()
+  while (cursor) {
+    if (!cursor.value.pinned) {
+      await transaction.objectStore("networkRecords").delete(cursor.value.id)
+      await cursor.delete()
+    }
+    cursor = await cursor.continue()
+  }
+  await transaction.done
 }
 
 // The popup only needs counts. Never send request/response bodies through runtime messaging.
 export const getNetworkRecordSummary = async (): Promise<NetworkRecordSummary> => {
-  const settings = await getCaptureSettings()
   const db = await getDb()
   const result = createNetworkRecordSummary()
   let cursor = await db
-    .transaction("networkRecords")
+    .transaction("recordPreviews")
     .store.index("by-startedAt")
     .openCursor(null, "prev")
-  while (cursor && result.summary.total < settings.captureLimit) {
+  while (cursor) {
     result.add(cursor.value)
     cursor = await cursor.continue()
   }
   return result.summary
+}
+
+export const getNetworkRecordsByIds = async (
+  ids: string[],
+  sessionId?: string,
+): Promise<NetworkRecord[]> => {
+  const db = await getDb()
+  const tx = db.transaction(["networkRecords", "sessionRecords"])
+  const records = await Promise.all(
+    ids.map(async (id) =>
+      sessionId
+        ? (await tx.objectStore("sessionRecords").get([sessionId, id]))?.record
+        : await tx.objectStore("networkRecords").get(id),
+    ),
+  )
+  await tx.done
+  if (records.some((record) => !record))
+    throw new Error("Some requests expired. Refresh the list and try again.")
+  return records as NetworkRecord[]
+}
+
+export const listNetworkRecordPreviews = async (
+  options?: ListNetworkRecordsPayload,
+  sessionId?: string,
+): Promise<NetworkRecordPreview[]> => {
+  const settings = await getCaptureSettings()
+  const limit = Math.max(
+    1,
+    Math.min(options?.limit ?? settings.captureLimit, settings.captureLimit),
+  )
+  const filters: NetworkRecordFilters = {
+    apiOnly: options?.apiOnly ?? false,
+    method: options?.method?.trim().toUpperCase(),
+    source: options?.source ?? "all",
+    host: options?.host?.trim().toLowerCase(),
+    statusGroup: options?.statusGroup ?? "all",
+    search: options?.search?.trim().toLowerCase(),
+  }
+  const db = await getDb()
+  const tx = db.transaction([
+    "recordPreviews",
+    "networkRecords",
+    "sessionPreviews",
+    "sessionRecords",
+  ])
+  const results: NetworkRecordPreview[] = []
+  const metadataFilters = { ...filters, search: undefined }
+  let unpinned = 0
+  let cursor = sessionId
+    ? await tx.objectStore("sessionPreviews").index("by-session").openCursor(sessionId)
+    : await tx.objectStore("recordPreviews").index("by-startedAt").openCursor(null, "prev")
+  while (cursor) {
+    const preview = cursor.value
+    if (
+      (sessionId || preview.pinned || unpinned < limit) &&
+      recordMatchesFilters(preview, metadataFilters)
+    ) {
+      let matches = !filters.search || recordMatchesFilters(preview, filters)
+      // Body search is opt-in by typing a query; routine refreshes never deserialize bodies.
+      if (!matches) {
+        const record = sessionId
+          ? (await tx.objectStore("sessionRecords").get([sessionId, preview.id]))?.record
+          : await tx.objectStore("networkRecords").get(preview.id)
+        matches = Boolean(record && recordMatchesFilters(record, filters))
+      }
+      if (matches) {
+        results.push(preview)
+        if (!preview.pinned) unpinned++
+      }
+    }
+    cursor = await cursor.continue()
+  }
+  await tx.done
+  return results.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+}
+
+export const setNetworkRecordPinned = async (id: string, pinned: boolean): Promise<void> => {
+  const db = await getDb()
+  const tx = db.transaction("recordPreviews", "readwrite")
+  const preview = await tx.store.get(id)
+  if (!preview) throw new Error("This request has expired. Refresh the list.")
+  await tx.store.put({ ...preview, pinned })
+  await tx.done
+  if (!pinned) await trimNetworkRecords()
+}
+
+export const listSavedSessions = async (): Promise<SavedSession[]> =>
+  (await (await getDb()).getAll("sessions")).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+
+export const saveSession = async (
+  name: string,
+  ids: string[],
+  sourceSessionId?: string,
+): Promise<SavedSession> => {
+  const cleanName = name.trim().slice(0, 120)
+  if (!cleanName || !ids.length)
+    throw new Error("Enter a session name and capture at least one request.")
+  const session: SavedSession = {
+    id: crypto.randomUUID(),
+    name: cleanName,
+    createdAt: new Date().toISOString(),
+    count: ids.length,
+  }
+  const db = await getDb()
+  const tx = db.transaction(
+    ["sessions", "sessionRecords", "sessionPreviews", "networkRecords"],
+    "readwrite",
+  )
+  try {
+    for (const id of ids) {
+      const record = sourceSessionId
+        ? (await tx.objectStore("sessionRecords").get([sourceSessionId, id]))?.record
+        : await tx.objectStore("networkRecords").get(id)
+      if (!record) throw new Error("A request expired before saving. Refresh and try again.")
+      await tx.objectStore("sessionRecords").put({ sessionId: session.id, id, record })
+      await tx
+        .objectStore("sessionPreviews")
+        .put({ ...toRecordPreview(record), sessionId: session.id })
+    }
+    await tx.objectStore("sessions").put(session)
+    await tx.done
+    return session
+  } catch (error) {
+    try {
+      tx.abort()
+    } catch {}
+    await tx.done.catch(() => {})
+    throw error
+  }
+}
+
+export const deleteSavedSession = async (id: string): Promise<void> => {
+  const db = await getDb()
+  const tx = db.transaction(["sessions", "sessionRecords", "sessionPreviews"], "readwrite")
+  for (const name of ["sessionRecords", "sessionPreviews"] as const) {
+    let cursor = await tx.objectStore(name).index("by-session").openCursor(id)
+    while (cursor) {
+      await cursor.delete()
+      cursor = await cursor.continue()
+    }
+  }
+  await tx.objectStore("sessions").delete(id)
+  await tx.done
 }

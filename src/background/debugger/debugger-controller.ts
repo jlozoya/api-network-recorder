@@ -1,3 +1,4 @@
+import type { CaptureTabStatus } from "../../core/capture-tab-status.js"
 import { withTimeout } from "../../core/async-utils.js"
 import {
   getCaptureSettings,
@@ -321,6 +322,7 @@ export const stopDebuggerCaptureForAllTabs = async (): Promise<void> => {
         }),
       ),
     )
+    captureErrors.clear()
   } finally {
     stoppingDebuggerCaptureForAllTabs = false
   }
@@ -377,4 +379,48 @@ export const getFreshDebuggerCaptureStatus = async (
   }
 
   return getDebuggerCaptureStatus(tabId)
+}
+
+export const getCaptureTabStatuses = async (): Promise<CaptureTabStatus[]> => {
+  const [tabs, settings] = await Promise.all([chrome.tabs.query({}), getCaptureSettings()])
+  return tabs
+    .filter((tab): tab is chrome.tabs.Tab & { id: number } => typeof tab.id === "number")
+    .map((tab) => {
+      let state: CaptureTabStatus["state"] = "off"
+      let reason = "Deep capture is off."
+      if (!isDebuggerCaptureSupported()) {
+        state = "unsupported"
+        reason = "This browser does not support deep capture."
+      } else if (!isCapturableUrl(tab.url)) {
+        state = "ineligible"
+        reason = "Only HTTP and HTTPS pages can be captured."
+      } else if (
+        settings.ignoredTabIds.includes(tab.id) ||
+        isUrlIgnoredByDomains(tab.url, settings.ignoredDomains)
+      ) {
+        state = "ignored"
+        reason = settings.ignoredTabIds.includes(tab.id) ? "Tab exclusion" : "Domain exclusion"
+      } else if (attachedTabs.has(tab.id)) {
+        state = "attached"
+        reason = settings.capturePaused
+          ? "Debugger connected; recording is paused."
+          : (captureErrors.get(tab.id) ?? "Debugger connected; capturing new requests.")
+      } else if (pendingAttachTabs.has(tab.id)) {
+        state = "pending"
+        reason = "Connecting to the debugger…"
+      } else if (captureErrors.has(tab.id)) {
+        state = "failed"
+        reason = captureErrors.get(tab.id)!
+      } else if (deepCaptureEnabled) {
+        state = "pending"
+        reason = "Waiting for connection or page navigation."
+      }
+      return {
+        tabId: tab.id,
+        title: tab.title ?? "Untitled tab",
+        url: tab.url ?? "",
+        state,
+        reason,
+      }
+    })
 }

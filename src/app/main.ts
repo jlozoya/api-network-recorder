@@ -5,7 +5,7 @@ import {
   hasCapturedBody,
   isProbablyApiRecord,
 } from "../core/endpoint-utils.js"
-import { recordToCurl } from "../core/export-curl.js"
+import { recordToCurl, type CurlShell } from "../core/export-curl.js"
 import type { ExtensionMessage, ExtensionResponse } from "../core/message-types.js"
 import type { CapturedBody, NetworkRecord } from "../core/network-types.js"
 import {
@@ -14,7 +14,18 @@ import {
   setCaptureSettings,
 } from "../storage/capture-settings.js"
 import { resetDb } from "../storage/db.js"
-import { clearNetworkRecords, listNetworkRecords } from "../storage/network-record-repository.js"
+import {
+  clearNetworkRecords,
+  listNetworkRecordPreviews,
+  getNetworkRecordsByIds,
+  listSavedSessions,
+  saveSession,
+  deleteSavedSession,
+  setNetworkRecordPinned,
+} from "../storage/network-record-repository.js"
+import type { NetworkRecordPreview, SavedSession } from "../core/record-preview.js"
+import type { CaptureTabStatus } from "../core/capture-tab-status.js"
+import { compareRecords } from "../core/compare-records.js"
 
 import "./app.css"
 
@@ -28,7 +39,7 @@ if (!app) {
 }
 
 interface AppState {
-  records: NetworkRecord[]
+  records: NetworkRecordPreview[]
   selectedRecordId: string | null
   selectedEndpointKey: string | null
   view: "requests" | "endpoints"
@@ -44,12 +55,22 @@ interface AppState {
   deepCaptureEnabled: boolean
   deepCaptureBusy: boolean
   ignoredDomains: string[]
+  sessions: SavedSession[]
+  sessionId: string
+  sessionName: string
+  curlShell: CurlShell
+  notice: string | null
+}
+
+interface ListAnchorRow {
+  key: string
+  offset: number
 }
 
 interface ListAnchor {
   pinnedToTop: boolean
-  anchorKey: string | null
-  anchorOffset: number
+  rows: ListAnchorRow[]
+  scrollTop: number
 }
 
 interface PanelScrollState {
@@ -78,7 +99,23 @@ const state: AppState = {
   deepCaptureEnabled: false,
   deepCaptureBusy: false,
   ignoredDomains: [],
+  sessions: [],
+  sessionId: "",
+  sessionName: "",
+  curlShell: "bash",
+  notice: null,
 }
+
+let reloadGeneration = 0
+let detailGeneration = 0
+let searchTimer: number | undefined
+let refreshInFlight = 0
+let detailLoading = false
+let detailError: string | null = null
+let compareBaseline: NetworkRecord | null = null
+let details = new Map<string, NetworkRecord>()
+const selectedRecord = () =>
+  state.selectedRecordId ? details.get(state.selectedRecordId) : undefined
 
 const withTimeout = async <T>(
   promise: Promise<T>,
@@ -195,37 +232,53 @@ const getListAnchor = (): ListAnchor => {
   const list = document.querySelector<HTMLElement>(".list")
 
   if (!list) {
-    return { pinnedToTop: true, anchorKey: null, anchorOffset: 0 }
+    return { pinnedToTop: true, rows: [], scrollTop: 0 }
   }
 
   const pinnedToTop = list.scrollTop <= LIST_TOP_PIN_THRESHOLD_PX
-  const containerTop = list.getBoundingClientRect().top
+  const bounds = list.getBoundingClientRect()
+  const rows: ListAnchorRow[] = []
 
+  // Remember every row on screen, topmost first. The rolling capture window
+  // deletes the oldest records while they are still being read, so the top
+  // anchor can be gone by the next refresh; the next row still on screen then
+  // keeps the viewport on the records the user is actually looking at.
   for (const item of list.querySelectorAll<HTMLElement>("[data-id], [data-endpoint-key]")) {
-    const itemTop = item.getBoundingClientRect().top
+    const itemRect = item.getBoundingClientRect()
 
-    if (itemTop >= containerTop) {
-      return {
-        pinnedToTop,
-        anchorKey: getListItemKey(item),
-        anchorOffset: itemTop - containerTop,
-      }
-    }
+    if (itemRect.bottom <= bounds.top) continue
+    if (itemRect.top >= bounds.bottom) break
+
+    const key = getListItemKey(item)
+
+    if (key) rows.push({ key, offset: itemRect.top - bounds.top })
   }
 
-  return { pinnedToTop, anchorKey: null, anchorOffset: 0 }
+  return { pinnedToTop, rows, scrollTop: list.scrollTop }
 }
 
 const restoreListAnchor = (anchor: ListAnchor): void => {
   const list = document.querySelector<HTMLElement>(".list")
 
-  if (!list || !anchor.anchorKey) {
+  if (!list) {
     return
   }
 
-  const target = findListItem(list, anchor.anchorKey)
+  let target: HTMLElement | null = null
+  let anchorOffset = 0
+
+  for (const row of anchor.rows) {
+    const candidate = findListItem(list, row.key)
+
+    if (candidate) {
+      target = candidate
+      anchorOffset = row.offset
+      break
+    }
+  }
 
   if (!target) {
+    list.scrollTop = anchor.pinnedToTop ? 0 : anchor.scrollTop
     return
   }
 
@@ -236,7 +289,10 @@ const restoreListAnchor = (anchor: ListAnchor): void => {
   // was (invisible to the user), then glide the rest of the way to reveal
   // any newly captured records above it — only when the user was already
   // pinned near the top, same as a chat autoscrolling to new messages.
-  list.scrollTop += targetTop - containerTop - anchor.anchorOffset
+  const offsetChange = targetTop - containerTop - anchorOffset
+  // An unchanged list must not cancel a smooth scroll already in progress.
+  if (Math.abs(offsetChange) < 0.5) return
+  list.scrollTop += offsetChange
 
   if (anchor.pinnedToTop && list.scrollTop > 0) {
     list.scrollTo({ top: 0, behavior: "smooth" })
@@ -253,15 +309,11 @@ const getPanelScrollState = (): PanelScrollState => {
 }
 
 const restorePanelScrollState = (scrollState: PanelScrollState): void => {
-  window.requestAnimationFrame(() => {
-    restoreListAnchor(scrollState.listAnchor)
-
-    const details = document.querySelector<HTMLElement>(".details")
-
-    if (details) {
-      details.scrollTop = scrollState.detailsScrollTop
-    }
-  })
+  restoreListAnchor(scrollState.listAnchor)
+  const panel = document.querySelector<HTMLElement>(".details")
+  if (panel && panel.scrollTop !== scrollState.detailsScrollTop) {
+    panel.scrollTop = scrollState.detailsScrollTop
+  }
 }
 
 const formatBody = (body: CapturedBody | null): string => {
@@ -416,7 +468,12 @@ const flashCopied = (button: HTMLElement | null): void => {
 }
 
 const getRecordFingerprint = (records: NetworkRecord[]): string => {
-  return records.map((record) => `${record.id}:${record.completedAt}`).join("|")
+  return records
+    .map(
+      (record) =>
+        `${record.id}:${record.completedAt}:${"pinned" in record ? record.pinned : false}`,
+    )
+    .join("|")
 }
 
 const isEditingFilters = (): boolean => {
@@ -433,21 +490,43 @@ const hasActiveSelection = (): boolean => {
   const selection = window.getSelection()
 
   return Boolean(
-    selection && !selection.isCollapsed && selection.anchorNode && app.contains(selection.anchorNode),
+    selection &&
+    !selection.isCollapsed &&
+    selection.anchorNode &&
+    app.contains(selection.anchorNode),
   )
 }
 
-const refreshRecords = async (): Promise<NetworkRecord[]> => {
+// Records kept alive for the open inspection stay in capture order: dropping
+// them at the end of the list would teleport the selected row to the bottom.
+const mergeRetainedRecords = (
+  loaded: NetworkRecordPreview[],
+  retained: NetworkRecordPreview[],
+): NetworkRecordPreview[] => {
+  const loadedIds = new Set(loaded.map((record) => record.id))
+  const missing = retained.filter((record) => !loadedIds.has(record.id))
+
+  if (!missing.length) {
+    return loaded
+  }
+
+  return [...loaded, ...missing].sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+}
+
+const refreshRecords = async (): Promise<NetworkRecordPreview[]> => {
   return await withTimeout(
-    listNetworkRecords({
-      limit: 2000,
-      search: state.search,
-      method: state.method,
-      statusGroup: state.statusGroup,
-      source: state.source,
-      host: state.host,
-      apiOnly: state.apiOnly,
-    }),
+    listNetworkRecordPreviews(
+      {
+        limit: 2000,
+        search: state.search,
+        method: state.method,
+        statusGroup: state.statusGroup,
+        source: state.source,
+        host: state.host,
+        apiOnly: state.apiOnly,
+      },
+      state.sessionId || undefined,
+    ),
     RECORD_LOAD_TIMEOUT_MS,
     "Local record load",
   )
@@ -608,7 +687,7 @@ const renderToolbar = (): string => {
                 )
               : ""
           }
-          ${renderActionButton("clear", "Clear", "trash", { className: "danger" })}
+          ${renderActionButton("clear", "Clear unpinned", "trash", { className: "danger", disabled: Boolean(state.sessionId) })}
         </div>
 
         <div class="actionRow exportActions">
@@ -619,6 +698,16 @@ const renderToolbar = (): string => {
       </div>
     </header>
 
+    <section class="sessionBar" aria-label="Saved sessions">
+      <label>Session <select id="sessionSelect"><option value="">Live capture</option>
+        ${state.sessions.map((session) => `<option value="${escapeHtml(session.id)}" ${state.sessionId === session.id ? "selected" : ""}>${escapeHtml(session.name)} (${session.count})</option>`).join("")}
+      </select></label>
+      <input id="sessionName" aria-label="New session name" placeholder="Session name" maxlength="120" value="${escapeHtml(state.sessionName)}" />
+      <button id="saveSession" type="button" ${state.records.length ? "" : "disabled"}>Save session visible requests</button>
+      ${state.sessionId ? '<button id="deleteSession" class="danger" type="button">Delete session</button>' : ""}
+      <button id="captureTabs" type="button">Tab status</button>
+    </section>
+    ${state.notice ? `<div class="notice" role="status">${escapeHtml(state.notice)}<button id="dismissNotice" type="button">Dismiss</button></div>` : ""}
     <nav class="tabs">
       <button class="tab ${state.view === "requests" ? "active" : ""}" data-view="requests" type="button">
         Requests
@@ -638,9 +727,10 @@ const renderRequestList = (): string => {
   return state.records
     .map(
       (record) => `
-        <article class="record ${state.selectedRecordId === record.id ? "selected" : ""}" data-id="${record.id}">
+        <article class="record ${state.selectedRecordId === record.id ? "selected" : ""}" data-id="${escapeHtml(record.id)}">
           <div class="recordMeta">
             <strong>${escapeHtml(record.method)}</strong>
+            ${record.pinned ? "<span>Pinned</span>" : ""}
             <span class="${getStatusClass(record)}">${escapeHtml(formatStatus(record))}</span>
             <span>${escapeHtml(record.source)}</span>
             <span>${record.durationMs ?? "-"}ms</span>
@@ -682,10 +772,10 @@ const renderEndpointList = (): string => {
 }
 
 const renderSelectedRequest = (): string => {
-  const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+  const record = selectedRecord()
 
   if (!record) {
-    return `<p class="empty">Select a request.</p>`
+    return `<p class="empty">${escapeHtml(detailLoading ? "Loading request details…" : (detailError ?? (state.selectedRecordId ? "Request no longer available. Refresh the list." : "Select a request.")))}</p>`
   }
 
   const domain = normalizeIgnoredDomain(getHost(record.url))
@@ -699,7 +789,11 @@ const renderSelectedRequest = (): string => {
       </div>
       <div class="detailsActions">
         <button id="copyDomain" type="button">Copy domain</button>
+        <select id="curlShell" aria-label="cURL terminal"><option value="bash" ${state.curlShell === "bash" ? "selected" : ""}>Bash</option><option value="powershell" ${state.curlShell === "powershell" ? "selected" : ""}>PowerShell 7.3+</option></select>
         <button id="copyCurl" type="button">Copy cURL</button>
+        ${!state.sessionId ? `<button id="pinRequest" type="button">${state.records.find((item) => item.id === record.id)?.pinned ? "Unpin request" : "Pin request"}</button>` : ""}
+        <button id="setBaseline" type="button">Use as comparison A</button>
+        ${compareBaseline ? '<button id="compareRequest" type="button">Compare A → this request</button><button id="clearBaseline" type="button">Clear A</button>' : ""}
         <button id="copyResponse" type="button">Copy response</button>
         ${
           domain
@@ -718,6 +812,7 @@ const renderSelectedRequest = (): string => {
       </div>
     </section>
 
+    ${compareBaseline ? `<p class="comparisonLabel">Comparison A: ${escapeHtml(compareBaseline.method + " " + compareBaseline.url + " · " + compareBaseline.completedAt)}</p>` : ""}
     <section class="summaryGrid">
       <div><strong>Source</strong><span>${escapeHtml(record.source)}</span></div>
       <div><strong>Duration</strong><span>${record.durationMs ?? "-"}ms</span></div>
@@ -766,10 +861,22 @@ const renderSelectedEndpoint = (): string => {
     </section>
 
     <h3>Available Request Bodies</h3>
-    ${renderAvailableBodies(group.records, (record) => record.requestBody)}
+    ${
+      detailLoading
+        ? '<p class="empty">Loading samples…</p>'
+        : detailError
+          ? `<p class="empty">${escapeHtml(detailError)}</p>`
+          : renderAvailableBodies(
+              group.records.flatMap((record) => details.get(record.id) ?? []),
+              (record) => record.requestBody,
+            )
+    }
 
     <h3>Available Response Bodies</h3>
-    ${renderAvailableBodies(group.records, (record) => record.responseBody)}
+    ${renderAvailableBodies(
+      group.records.flatMap((record) => details.get(record.id) ?? []),
+      (record) => record.responseBody,
+    )}
 
     <h3>Observed Records</h3>
     <div class="miniList">
@@ -790,8 +897,78 @@ const renderSelectedEndpoint = (): string => {
   `
 }
 
+// Reuse the scroll containers and rows so refreshes do not reset focus,
+// text selection, or a native scroll animation already in progress.
+const updateInspector = (html: string, layout: HTMLElement): void => {
+  const template = document.createElement("template")
+  template.innerHTML = html
+  const nextLayout = template.content.querySelector<HTMLElement>(".layout")!
+  const list = layout.querySelector<HTMLElement>(".list")!
+  const nextList = nextLayout.querySelector<HTMLElement>(".list")!
+  const existingRows = new Map(
+    Array.from(list.querySelectorAll<HTMLElement>(".record"), (row) => [getListItemKey(row), row]),
+  )
+  const nextRows = Array.from(nextList.querySelectorAll<HTMLElement>(".record"))
+  const nextKeys = new Set(nextRows.map(getListItemKey))
+  for (const child of Array.from(list.children)) {
+    if (!nextKeys.has(getListItemKey(child as HTMLElement))) child.remove()
+  }
+  let cursor = list.firstElementChild
+  for (const nextRow of nextRows) {
+    const key = getListItemKey(nextRow)
+    const existing = existingRows.get(key)
+    const row = existing ?? nextRow
+    if (existing) {
+      if (row.className !== nextRow.className) row.className = nextRow.className
+      if (row.innerHTML !== nextRow.innerHTML) row.innerHTML = nextRow.innerHTML
+    }
+    if (row !== cursor) list.insertBefore(row, cursor)
+    cursor = row.nextElementSibling
+    if (!existing && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      row.animate(
+        [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "translateY(0)" }],
+        { duration: 240, easing: "ease-out" },
+      )
+    }
+  }
+  if (!nextRows.length && list.innerHTML !== nextList.innerHTML) {
+    list.innerHTML = nextList.innerHTML
+  }
+
+  const panel = layout.querySelector<HTMLElement>(".details")!
+  const nextPanel = nextLayout.querySelector<HTMLElement>(".details")!
+  if (panel.innerHTML !== nextPanel.innerHTML) panel.innerHTML = nextPanel.innerHTML
+
+  // The toolbar and filters are separate sections; changing a count must not
+  // detach the list or the detail panel from the document.
+  const nextSections = Array.from(template.content.children)
+  const sectionClasses = new Set(nextSections.map((section) => section.className))
+  for (const section of Array.from(app.children)) {
+    if (!sectionClasses.has(section.className)) section.remove()
+  }
+  for (const nextSection of nextSections) {
+    if (nextSection.className === "layout") continue
+    const section = Array.from(app.children).find(
+      (current) => current.className === nextSection.className,
+    )
+    if (!section) {
+      const following = nextSections.slice(nextSections.indexOf(nextSection) + 1)
+      const before = Array.from(app.children).find(
+        (current) => following.some((next) => next.className === current.className),
+      )
+      app.insertBefore(nextSection, before ?? layout)
+    } else if (section.innerHTML !== nextSection.innerHTML) {
+      section.innerHTML = nextSection.innerHTML
+    }
+  }
+}
+
 const render = (options?: RenderOptions): void => {
   const previousPanelScrollState = options?.preservePanelScroll ? getPanelScrollState() : null
+  const focused = document.activeElement instanceof HTMLInputElement ? document.activeElement : null
+  const focusedId = focused?.id
+  const selection =
+    focused?.type === "search" ? ([focused.selectionStart, focused.selectionEnd] as const) : null
 
   if (state.error) {
     renderError(state.error)
@@ -803,7 +980,7 @@ const render = (options?: RenderOptions): void => {
     return
   }
 
-  app.innerHTML = `
+  const html = `
     ${renderToolbar()}
     ${renderFilters()}
 
@@ -818,14 +995,26 @@ const render = (options?: RenderOptions): void => {
     </section>
   `
 
+  const layout = document.querySelector<HTMLElement>(".layout")
+  if (options?.preservePanelScroll && layout) updateInspector(html, layout)
+  else app.innerHTML = html
+
   bindEvents()
+  if (focusedId) {
+    const input = document.getElementById(focusedId) as HTMLInputElement | null
+    if (input && input !== document.activeElement) input.focus({ preventScroll: true })
+    if (input && selection) input.setSelectionRange(selection[0], selection[1])
+  }
 
   if (previousPanelScrollState) {
     restorePanelScrollState(previousPanelScrollState)
   }
 }
 
-const reload = async (options?: { silent?: boolean }): Promise<void> => {
+const reload = async (options?: { silent?: boolean; preserveSelection?: boolean }): Promise<void> => {
+  const generation = ++reloadGeneration
+  refreshInFlight++
+  const recordsPromise = refreshRecords()
   try {
     const previousFingerprint = getRecordFingerprint(state.records)
     const previousSettings = JSON.stringify([
@@ -840,8 +1029,31 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
       render()
     }
 
-    const settings = await getCaptureSettings()
-    const nextRecords = await refreshRecords()
+    const [settings, loadedRecords, sessions] = await Promise.all([
+      getCaptureSettings(),
+      recordsPromise,
+      listSavedSessions(),
+    ])
+    if (generation !== reloadGeneration) return
+    // Keep the current inspection available when live retention removes its records.
+    // Explicit filter/session changes still use only the freshly queried records.
+    const selectedRecords = options?.preserveSelection
+      ? state.view === "requests"
+        ? state.records.filter((record) => record.id === state.selectedRecordId)
+        : groupRecordsByEndpoint(state.records).find(
+            (group) => group.key === state.selectedEndpointKey,
+          )?.records ?? []
+      : []
+    const selectedStillPresent = state.view === "requests"
+      ? loadedRecords.some((record) => record.id === state.selectedRecordId)
+      : groupRecordsByEndpoint(loadedRecords).some(
+          (group) => group.key === state.selectedEndpointKey,
+        )
+    const nextRecords: NetworkRecordPreview[] = selectedStillPresent
+      ? loadedRecords
+      : mergeRetainedRecords(loadedRecords, selectedRecords as NetworkRecordPreview[])
+    const sessionsChanged = JSON.stringify(state.sessions) !== JSON.stringify(sessions)
+    state.sessions = sessions
     const nextFingerprint = getRecordFingerprint(nextRecords)
     state.listeningPaused = settings.capturePaused
     state.deepCaptureEnabled = settings.deepCaptureEnabled
@@ -854,6 +1066,7 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
       options?.silent &&
       previousFingerprint === nextFingerprint &&
       !settingsChanged &&
+      !sessionsChanged &&
       !state.loading &&
       !state.error
     ) {
@@ -861,6 +1074,10 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     }
 
     state.records = nextRecords
+    for (const [id, record] of details) {
+      if (!nextRecords.some((item) => item.id === id && item.completedAt === record.completedAt))
+        details.delete(id)
+    }
 
     if (
       state.selectedRecordId &&
@@ -883,7 +1100,10 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     render({
       preservePanelScroll: Boolean(options?.silent),
     })
+    if (state.selectedRecordId || state.selectedEndpointKey)
+      void loadSelectedDetails({ renderInitial: false })
   } catch (error) {
+    if (generation !== reloadGeneration) return
     if (options?.silent) {
       console.warn("[API Network Recorder] Silent refresh failed.", error)
       return
@@ -892,12 +1112,16 @@ const reload = async (options?: { silent?: boolean }): Promise<void> => {
     state.loading = false
     state.error = error instanceof Error ? error.message : String(error)
     render()
+  } finally {
+    refreshInFlight--
   }
 }
 
 const scheduleAutoRefresh = (): void => {
   window.setInterval(() => {
     if (
+      refreshInFlight > 0 ||
+      Boolean(state.sessionId) ||
       state.listeningPaused ||
       document.hidden ||
       state.loading ||
@@ -908,12 +1132,96 @@ const scheduleAutoRefresh = (): void => {
       return
     }
 
-    void reload({ silent: true })
+    void reload({ silent: true, preserveSelection: true })
   }, AUTO_REFRESH_INTERVAL_MS)
 }
 
+const boundControls = new WeakSet<Element>()
+const unboundControls = {
+  querySelector<T extends Element = Element>(selector: string): T | null {
+    const element = document.querySelector<T>(selector)
+    if (!element || boundControls.has(element)) return null
+    boundControls.add(element)
+    return element
+  },
+  querySelectorAll<T extends Element = Element>(selector: string): T[] {
+    return Array.from(document.querySelectorAll<T>(selector)).filter((element) => {
+      if (boundControls.has(element)) return false
+      boundControls.add(element)
+      return true
+    })
+  },
+}
+
 const bindEvents = (): void => {
-  document.querySelector("#toggleListening")?.addEventListener("click", () => {
+  unboundControls.querySelector("#dismissNotice")?.addEventListener("click", () => {
+    state.notice = null
+    render({ preservePanelScroll: true })
+  })
+  unboundControls.querySelector("#sessionName")?.addEventListener("input", (event) => {
+    state.sessionName = (event.target as HTMLInputElement).value
+  })
+  unboundControls.querySelector("#curlShell")?.addEventListener("change", (event) => {
+    state.curlShell = (event.target as HTMLSelectElement).value as CurlShell
+  })
+  unboundControls.querySelector("#sessionSelect")?.addEventListener("change", (event) => {
+    state.sessionId = (event.target as HTMLSelectElement).value
+    state.selectedRecordId = null
+    state.selectedEndpointKey = null
+    details.clear()
+    detailGeneration++
+    void reload()
+  })
+  unboundControls.querySelector("#saveSession")?.addEventListener("click", (event) => {
+    void runAction(event, async () => {
+      const session = await saveSession(
+        state.sessionName,
+        state.records.map((record) => record.id),
+        state.sessionId || undefined,
+      )
+      state.sessionName = ""
+      state.notice = "Saved “" + session.name + "” with " + session.count + " requests."
+      await reload()
+    })
+  })
+  unboundControls.querySelector("#deleteSession")?.addEventListener("click", (event) => {
+    const sessionId = state.sessionId
+    if (!sessionId || !window.confirm("Delete this saved session? This cannot be undone.")) return
+    void runAction(event, async () => {
+      await deleteSavedSession(sessionId)
+      state.sessionId = ""
+      details.clear()
+      detailGeneration++
+      state.selectedRecordId = null
+      state.selectedEndpointKey = null
+      await reload()
+    })
+  })
+  unboundControls.querySelector("#pinRequest")?.addEventListener("click", (event) => {
+    const record = state.records.find((item) => item.id === state.selectedRecordId)
+    if (record)
+      void runAction(event, async () => {
+        await setNetworkRecordPinned(record.id, !record.pinned)
+        await reload({ silent: true })
+      })
+  })
+  unboundControls.querySelector("#setBaseline")?.addEventListener("click", () => {
+    compareBaseline = selectedRecord() ?? null
+    render({ preservePanelScroll: true })
+  })
+  unboundControls.querySelector("#clearBaseline")?.addEventListener("click", () => {
+    compareBaseline = null
+    render({ preservePanelScroll: true })
+  })
+  unboundControls.querySelector("#compareRequest")?.addEventListener("click", () => {
+    const record = selectedRecord()
+    if (record && compareBaseline) showComparison(compareBaseline, record)
+  })
+  unboundControls.querySelector("#captureTabs")?.addEventListener("click", () => {
+    void showCaptureTabs()
+  })
+
+  unboundControls.querySelector("#toggleListening")?.addEventListener("click", () => {
     const nextPaused = !state.listeningPaused
 
     state.listeningPaused = nextPaused
@@ -936,11 +1244,11 @@ const bindEvents = (): void => {
       })
   })
 
-  document.querySelector("#refresh")?.addEventListener("click", () => {
+  unboundControls.querySelector("#refresh")?.addEventListener("click", () => {
     void reload({ silent: false })
   })
 
-  document.querySelector("#toggleDeepCapture")?.addEventListener("click", () => {
+  unboundControls.querySelector("#toggleDeepCapture")?.addEventListener("click", () => {
     const nextEnabled = !state.deepCaptureEnabled
 
     state.deepCaptureBusy = true
@@ -965,56 +1273,105 @@ const bindEvents = (): void => {
       })
   })
 
-  document.querySelector("#clear")?.addEventListener("click", async () => {
-    await clearNetworkRecords()
+  unboundControls.querySelector("#clear")?.addEventListener("click", (event) => {
+    void runAction(event, async () => {
+      // Drop the open inspection before touching the database: a refresh or a
+      // detail load already in flight would otherwise carry the selected
+      // record back into the list after it has been cleared.
+      reloadGeneration++
+      detailGeneration++
+      state.selectedRecordId = null
+      state.selectedEndpointKey = null
+      state.records = []
+      details.clear()
+      compareBaseline = null
+      detailError = null
+      detailLoading = false
 
-    state.selectedRecordId = null
-    state.selectedEndpointKey = null
-    await reload({ silent: false })
-  })
-
-  document.querySelector("#exportJson")?.addEventListener("click", () => {
-    downloadText(
-      "api-network-records.json",
-      JSON.stringify(state.records, null, 2),
-      "application/json",
-    )
-  })
-
-  document.querySelector("#exportMarkdown")?.addEventListener("click", () => {
-    downloadText(
-      "observed-api.md",
-      exportEndpointMarkdown(groupRecordsByEndpoint(state.records)),
-      "text/markdown",
-    )
-  })
-
-  document.querySelector("#exportOpenApi")?.addEventListener("click", () => {
-    downloadText(
-      "openapi-draft.json",
-      exportOpenApiDraft(groupRecordsByEndpoint(state.records)),
-      "application/json",
-    )
-  })
-
-  document.querySelectorAll<HTMLButtonElement>(".tab").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.view = button.dataset.view === "endpoints" ? "endpoints" : "requests"
-      render()
+      await clearNetworkRecords()
+      await reload({ silent: false })
     })
   })
 
-  document.querySelector("#search")?.addEventListener("input", (event) => {
-    state.search = event.target instanceof HTMLInputElement ? event.target.value : ""
-    void reload({ silent: true })
+  unboundControls.querySelector("#exportJson")?.addEventListener("click", (event) => {
+    void runAction(event, async () =>
+      downloadText(
+        "api-network-records.json",
+        JSON.stringify(await visibleRecords(), null, 2),
+        "application/json",
+      ),
+    )
+  })
+  unboundControls.querySelector("#exportMarkdown")?.addEventListener("click", (event) => {
+    void runAction(event, async () =>
+      downloadText(
+        "observed-api.md",
+        exportEndpointMarkdown(groupRecordsByEndpoint(await visibleRecords())),
+        "text/markdown",
+      ),
+    )
+  })
+  unboundControls.querySelector("#exportOpenApi")?.addEventListener("click", () => {
+    const groups = groupRecordsByEndpoint(state.records)
+    const origins = [...new Set(groups.map((group) => group.origin))]
+    const sessionId = state.sessionId
+    const dialog = showDialog(
+      "Export OpenAPI",
+      '<p>Download a separate document for each API origin. Exports include the current filters.</p><div class="dialogActions">' +
+        origins
+          .map(
+            (origin, index) =>
+              '<button type="button" data-origin="' +
+              index +
+              '">' +
+              escapeHtml(origin) +
+              "</button>",
+          )
+          .join("") +
+        (origins.length ? "" : "<p>No requests to export.</p>") +
+        "</div>",
+    )
+    dialog.querySelectorAll<HTMLButtonElement>("[data-origin]").forEach((button) =>
+      button.addEventListener("click", (event) => {
+        void runAction(event, async () => {
+          const origin = origins[Number(button.dataset.origin)]!
+          const ids = groups
+            .filter((group) => group.origin === origin)
+            .flatMap((group) => group.records.map((record) => record.id))
+          const records = await getNetworkRecordsByIds(ids, sessionId || undefined)
+          downloadText(
+            "openapi-" + origin.replace(/[^a-z0-9.-]/gi, "_") + ".json",
+            exportOpenApiDraft(groupRecordsByEndpoint(records)),
+            "application/json",
+          )
+        })
+      }),
+    )
   })
 
-  document.querySelector("#method")?.addEventListener("change", (event) => {
+  unboundControls.querySelectorAll<HTMLButtonElement>(".tab").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view === "endpoints" ? "endpoints" : "requests"
+      render()
+      void loadSelectedDetails({ renderInitial: false })
+    })
+  })
+
+  unboundControls.querySelector("#search")?.addEventListener("input", (event) => {
+    state.search = event.target instanceof HTMLInputElement ? event.target.value : ""
+    reloadGeneration++
+    window.clearTimeout(searchTimer)
+    searchTimer = window.setTimeout(() => {
+      void reload({ silent: true })
+    }, 300)
+  })
+
+  unboundControls.querySelector("#method")?.addEventListener("change", (event) => {
     state.method = event.target instanceof HTMLSelectElement ? event.target.value : "ALL"
     void reload({ silent: true })
   })
 
-  document.querySelector("#statusGroup")?.addEventListener("change", (event) => {
+  unboundControls.querySelector("#statusGroup")?.addEventListener("change", (event) => {
     state.statusGroup =
       event.target instanceof HTMLSelectElement
         ? (event.target.value as AppState["statusGroup"])
@@ -1022,45 +1379,45 @@ const bindEvents = (): void => {
     void reload({ silent: true })
   })
 
-  document.querySelector("#source")?.addEventListener("change", (event) => {
+  unboundControls.querySelector("#source")?.addEventListener("change", (event) => {
     state.source =
       event.target instanceof HTMLSelectElement ? (event.target.value as AppState["source"]) : "all"
     void reload({ silent: true })
   })
 
-  document.querySelector("#host")?.addEventListener("change", (event) => {
+  unboundControls.querySelector("#host")?.addEventListener("change", (event) => {
     state.host = event.target instanceof HTMLSelectElement ? event.target.value : ""
     void reload({ silent: true })
   })
 
-  document.querySelector("#apiOnly")?.addEventListener("change", (event) => {
+  unboundControls.querySelector("#apiOnly")?.addEventListener("change", (event) => {
     state.apiOnly = event.target instanceof HTMLInputElement ? event.target.checked : true
     void reload({ silent: true })
   })
 
-  document.querySelectorAll<HTMLElement>(".record[data-id]").forEach((item) => {
+  unboundControls.querySelectorAll<HTMLElement>(".record[data-id]").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedRecordId = item.dataset.id ?? null
-      render({ preservePanelScroll: true })
+      void loadSelectedDetails()
     })
   })
 
-  document.querySelectorAll<HTMLElement>(".record[data-endpoint-key]").forEach((item) => {
+  unboundControls.querySelectorAll<HTMLElement>(".record[data-endpoint-key]").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedEndpointKey = item.dataset.endpointKey ?? null
-      render({ preservePanelScroll: true })
+      void loadSelectedDetails()
     })
   })
 
-  document.querySelectorAll<HTMLButtonElement>(".miniRecord").forEach((button) => {
+  unboundControls.querySelectorAll<HTMLButtonElement>(".miniRecord").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedRecordId = button.dataset.id ?? null
       state.view = "requests"
-      render({ preservePanelScroll: true })
+      void loadSelectedDetails()
     })
   })
 
-  document
+  unboundControls
     .querySelector<HTMLButtonElement>("#toggleIgnoreDomain")
     ?.addEventListener("click", async (event) => {
       const button = event.currentTarget as HTMLButtonElement
@@ -1080,39 +1437,45 @@ const bindEvents = (): void => {
       render({ preservePanelScroll: true })
     })
 
-  document.querySelector<HTMLButtonElement>("#copyDomain")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget as HTMLElement
-    const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+  unboundControls
+    .querySelector<HTMLButtonElement>("#copyDomain")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLElement
+      const record = selectedRecord()
 
-    if (record) {
-      await copyText(getHost(record.url))
-      flashCopied(button)
-    }
-  })
+      if (record) {
+        await copyText(getHost(record.url))
+        flashCopied(button)
+      }
+    })
 
-  document.querySelector<HTMLButtonElement>("#copyCurl")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget as HTMLElement
-    const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+  unboundControls
+    .querySelector<HTMLButtonElement>("#copyCurl")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLElement
+      const record = selectedRecord()
 
-    if (record) {
-      await copyText(recordToCurl(record))
-      flashCopied(button)
-    }
-  })
+      if (record) {
+        await copyText(recordToCurl(record, state.curlShell))
+        flashCopied(button)
+      }
+    })
 
-  document.querySelector<HTMLButtonElement>("#copyResponse")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget as HTMLElement
-    const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+  unboundControls
+    .querySelector<HTMLButtonElement>("#copyResponse")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLElement
+      const record = selectedRecord()
 
-    if (record) {
-      await copyText(formatBody(record.responseBody))
-      flashCopied(button)
-    }
-  })
+      if (record) {
+        await copyText(formatBody(record.responseBody))
+        flashCopied(button)
+      }
+    })
 
-  document.querySelectorAll<HTMLButtonElement>(".copySection").forEach((button) => {
+  unboundControls.querySelectorAll<HTMLButtonElement>(".copySection").forEach((button) => {
     button.addEventListener("click", async () => {
-      const record = state.records.find((entry) => entry.id === state.selectedRecordId)
+      const record = selectedRecord()
 
       if (!record) {
         return
@@ -1136,7 +1499,7 @@ const bindEvents = (): void => {
     })
   })
 
-  document
+  unboundControls
     .querySelector<HTMLButtonElement>("#copyEndpointMarkdown")
     ?.addEventListener("click", async (event) => {
       const button = event.currentTarget as HTMLElement
@@ -1145,10 +1508,200 @@ const bindEvents = (): void => {
       )
 
       if (group) {
-        await copyText(exportEndpointMarkdown([group]))
+        await copyText(
+          exportEndpointMarkdown(
+            groupRecordsByEndpoint(
+              await getNetworkRecordsByIds(
+                group.records.map((record) => record.id),
+                state.sessionId || undefined,
+              ),
+            ),
+          ),
+        )
         flashCopied(button)
       }
     })
+}
+
+const visibleRecords = () =>
+  getNetworkRecordsByIds(
+    state.records.map((record) => record.id),
+    state.sessionId || undefined,
+  )
+
+const runAction = async (event: Event, action: () => Promise<void>): Promise<void> => {
+  const button = event.currentTarget as HTMLButtonElement | null
+  if (button) button.disabled = true
+  try {
+    await action()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const dialog = button?.closest("dialog")
+    if (dialog) {
+      let notice = dialog.querySelector(".dialogError")
+      if (!notice) {
+        notice = document.createElement("p")
+        notice.className = "dialogError"
+        notice.setAttribute("role", "alert")
+        dialog.append(notice)
+      }
+      notice.textContent = message
+    } else {
+      state.notice = message
+      render({ preservePanelScroll: true })
+    }
+  } finally {
+    if (button?.isConnected) button.disabled = false
+  }
+}
+
+const showDialog = (title: string, content: string): HTMLDialogElement => {
+  const dialog = document.createElement("dialog")
+  dialog.className = "inspectorDialog"
+  dialog.setAttribute("aria-label", title)
+  dialog.innerHTML =
+    '<div class="dialogHeader"><h2>' +
+    escapeHtml(title) +
+    '</h2><button type="button" class="closeDialog">Close</button></div>' +
+    content
+  document.body.append(dialog)
+  dialog.querySelector(".closeDialog")?.addEventListener("click", () => dialog.close())
+  dialog.addEventListener("close", () => dialog.remove(), { once: true })
+  dialog.showModal()
+  return dialog
+}
+
+const showComparison = (before: NetworkRecord, after: NetworkRecord): void => {
+  const result = compareRecords(before, after)
+  const format = (value: unknown) =>
+    value === undefined
+      ? "(absent)"
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value, null, 2)
+  showDialog(
+    "Compare requests",
+    '<p class="detailsUrl">A: ' +
+      escapeHtml(before.method + " " + before.url + " \u00B7 " + before.completedAt) +
+      '</p><p class="detailsUrl">B: ' +
+      escapeHtml(after.method + " " + after.url + " \u00B7 " + after.completedAt) +
+      "</p>" +
+      (result.differences.length
+        ? '<table class="diffTable"><thead><tr><th>Field / change</th><th>A</th><th>B</th></tr></thead><tbody>' +
+          result.differences
+            .map(
+              (item) =>
+                '<tr class="diff-' +
+                item.kind +
+                '"><th scope="row">' +
+                escapeHtml(item.path) +
+                "<small>" +
+                item.kind +
+                "</small></th><td><pre>" +
+                escapeHtml(format(item.before)) +
+                "</pre></td><td><pre>" +
+                escapeHtml(format(item.after)) +
+                "</pre></td></tr>",
+            )
+            .join("") +
+          "</tbody></table>"
+        : '<p class="empty">No differences in request or response data.</p>') +
+      (result.truncated ? "<p>Showing the first 1,000 differences.</p>" : ""),
+  )
+}
+
+const showCaptureTabs = async (): Promise<void> => {
+  const dialog = showDialog(
+    "Deep capture by tab",
+    '<p>Global capture applies to eligible tabs and respects exclusions.</p><button class="refreshTabs" type="button">Refresh status</button><div class="tabStatusList" aria-live="polite">Loading\u2026</div>',
+  )
+  const content = dialog.querySelector(".tabStatusList")!
+  let busy = false
+  const update = async () => {
+    if (busy || !dialog.open) return
+    busy = true
+    try {
+      const tabs = await withTimeout(
+        sendMessage<CaptureTabStatus[]>({ type: "GET_CAPTURE_TABS_STATUS" }),
+        8000,
+        "Tab status",
+      )
+      if (!dialog.open) return
+      content.innerHTML =
+        tabs
+          .map(
+            (tab) =>
+              '<article class="tabStatus"><strong>' +
+              escapeHtml(tab.title) +
+              '</strong><span class="captureState state-' +
+              tab.state +
+              '">' +
+              escapeHtml(tab.state) +
+              "</span><p>" +
+              escapeHtml(tab.url) +
+              "</p><p>" +
+              escapeHtml(tab.reason) +
+              "</p></article>",
+          )
+          .join("") || "<p>No tabs.</p>"
+    } catch (error) {
+      if (dialog.open) content.textContent = error instanceof Error ? error.message : String(error)
+    } finally {
+      busy = false
+    }
+  }
+  dialog.querySelector(".refreshTabs")?.addEventListener("click", () => {
+    void update()
+  })
+  const timer = window.setInterval(() => {
+    void update()
+  }, 2000)
+  dialog.addEventListener("close", () => window.clearInterval(timer), { once: true })
+  await update()
+}
+
+const loadSelectedDetails = async (options?: { renderInitial?: boolean }): Promise<void> => {
+  const generation = ++detailGeneration
+  const sessionId = state.sessionId
+  const group =
+    state.view === "endpoints"
+      ? groupRecordsByEndpoint(state.records).find((item) => item.key === state.selectedEndpointKey)
+      : undefined
+  const candidates = group
+    ? [
+        ...group.records
+          .filter((item) => (item as NetworkRecordPreview).hasRequestBody)
+          .slice(0, 10),
+        ...group.records
+          .filter((item) => (item as NetworkRecordPreview).hasResponseBody)
+          .slice(0, 10),
+        ...group.records.slice(0, 1),
+      ]
+    : state.records.filter((item) => item.id === state.selectedRecordId)
+  const ids = [...new Set(candidates.map((record) => record.id))]
+  const missing = ids.filter((id) => !details.has(id))
+  details = new Map([...details].filter(([id]) => ids.includes(id)))
+  detailLoading = missing.length > 0
+  detailError = null
+  if (options?.renderInitial !== false) render({ preservePanelScroll: true })
+  if (!missing.length) return
+  try {
+    const records = await withTimeout(
+      getNetworkRecordsByIds(missing, sessionId || undefined),
+      RECORD_LOAD_TIMEOUT_MS,
+      "Request details",
+    )
+    if (generation !== detailGeneration || sessionId !== state.sessionId) return
+    for (const record of records) details.set(record.id, record)
+  } catch (error) {
+    if (generation !== detailGeneration) return
+    detailError = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (generation === detailGeneration) {
+      detailLoading = false
+      render({ preservePanelScroll: true })
+    }
+  }
 }
 
 void reload({ silent: false }).then(() => {

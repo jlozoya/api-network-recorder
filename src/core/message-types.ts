@@ -12,6 +12,7 @@ export interface ListNetworkRecordsPayload {
 }
 
 export type ExtensionMessage =
+  | { type: "GET_CAPTURE_TABS_STATUS" }
   | { type: "GET_RECORD_SUMMARY" }
   | {
       type: "NETWORK_RECORD_CREATED"

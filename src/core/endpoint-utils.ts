@@ -59,15 +59,21 @@ export const normalizeEndpointPath = (url: string): string => {
   try {
     const parsed = new URL(url)
 
+    const names = new Map<string, number>()
+    const parameter = (name: string) => {
+      const count = (names.get(name) ?? 0) + 1
+      names.set(name, count)
+      return `{${name}${count > 1 ? count : ""}}`
+    }
     return parsed.pathname
       .split("/")
       .map((part) => {
         if (!part) return part
 
-        if (UUID_RE.test(part)) return "{uuid}"
-        if (OBJECT_ID_RE.test(part)) return "{id}"
-        if (NUMERIC_ID_RE.test(part)) return "{id}"
-        if (HASH_RE.test(part)) return "{token}"
+        if (UUID_RE.test(part)) return parameter("uuid")
+        if (OBJECT_ID_RE.test(part)) return parameter("id")
+        if (NUMERIC_ID_RE.test(part)) return parameter("id")
+        if (HASH_RE.test(part)) return parameter("token")
 
         return part
       })
@@ -78,10 +84,6 @@ export const normalizeEndpointPath = (url: string): string => {
 }
 
 export const getRecordOrigin = (record: NetworkRecord): string => {
-  if (record.origin) {
-    return record.origin
-  }
-
   try {
     return new URL(record.url).origin
   } catch {
@@ -99,6 +101,7 @@ export const getRecordPath = (record: NetworkRecord): string => {
 
 export const groupRecordsByEndpoint = (records: NetworkRecord[]): EndpointGroup[] => {
   const groups = new Map<string, EndpointGroup>()
+  const totals = new Map<string, { sum: number; count: number }>()
 
   for (const record of records) {
     const origin = getRecordOrigin(record)
@@ -107,6 +110,12 @@ export const groupRecordsByEndpoint = (records: NetworkRecord[]): EndpointGroup[
     const existing = groups.get(key)
     const status = record.status
     const duration = record.durationMs
+    const total = totals.get(key) ?? { sum: 0, count: 0 }
+    if (typeof duration === "number") {
+      total.sum += duration
+      total.count++
+    }
+    totals.set(key, total)
 
     if (!existing) {
       groups.set(key, {
@@ -128,20 +137,17 @@ export const groupRecordsByEndpoint = (records: NetworkRecord[]): EndpointGroup[
 
     existing.count += 1
     existing.records.push(record)
-    existing.lastSeenAt = record.completedAt
+    existing.firstSeenAt =
+      existing.firstSeenAt < record.startedAt ? existing.firstSeenAt : record.startedAt
+    existing.lastSeenAt =
+      existing.lastSeenAt > record.completedAt ? existing.lastSeenAt : record.completedAt
 
     if (typeof status === "number" && !existing.statuses.includes(status)) {
       existing.statuses.push(status)
       existing.statuses.sort((a, b) => a - b)
     }
 
-    const durations = existing.records
-      .map((item) => item.durationMs)
-      .filter((item): item is number => typeof item === "number")
-
-    existing.averageDurationMs = durations.length
-      ? Math.round(durations.reduce((sum, item) => sum + item, 0) / durations.length)
-      : null
+    existing.averageDurationMs = total.count ? Math.round(total.sum / total.count) : null
   }
 
   return Array.from(groups.values()).sort((a, b) => b.count - a.count)
@@ -177,15 +183,7 @@ const bodyToExample = (body: CapturedBody | null): unknown => {
   return body.reason
 }
 
-const bodyToSchema = (body: CapturedBody | null): unknown => {
-  if (!body || body.kind !== "json") {
-    return undefined
-  }
-
-  return inferJsonSchema(body.value)
-}
-
-const inferJsonSchema = (value: unknown): unknown => {
+export const inferJsonSchema = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return {
       type: "array",
@@ -195,12 +193,12 @@ const inferJsonSchema = (value: unknown): unknown => {
 
   if (value === null) {
     return {
-      nullable: true,
+      type: "null",
     }
   }
 
   if (typeof value === "object") {
-    const properties: Record<string, unknown> = {}
+    const properties: Record<string, unknown> = Object.create(null)
     const required: string[] = []
 
     for (const [key, itemValue] of Object.entries(value as Record<string, unknown>)) {
@@ -255,45 +253,4 @@ export const exportEndpointMarkdown = (groups: EndpointGroup[]): string => {
     .join("\n\n---\n\n")
 }
 
-export const exportOpenApiDraft = (groups: EndpointGroup[]): string => {
-  const paths: Record<string, Record<string, unknown>> = {}
-
-  for (const group of groups) {
-    const sample = getBestResponseSample(group.records)
-    const path = group.normalizedPath.replaceAll("{id}", "{id}").replaceAll("{uuid}", "{uuid}")
-    const method = group.method.toLowerCase()
-
-    paths[path] ??= {}
-    paths[path][method] = {
-      summary: `${group.method} ${group.normalizedPath}`,
-      description: `Observed ${group.count} call(s) from local browser traffic.`,
-      responses: Object.fromEntries(
-        (group.statuses.length ? group.statuses : [200]).map((status) => [
-          String(status),
-          {
-            description: `Observed ${status}`,
-            content: {
-              "application/json": {
-                schema: bodyToSchema(sample?.responseBody ?? null) ?? {},
-                example: bodyToExample(sample?.responseBody ?? null),
-              },
-            },
-          },
-        ]),
-      ),
-    }
-  }
-
-  return JSON.stringify(
-    {
-      openapi: "3.1.0",
-      info: {
-        title: "Observed API",
-        version: "0.1.0",
-      },
-      paths,
-    },
-    null,
-    2,
-  )
-}
+export { exportOpenApiDraft, exportOpenApiDrafts } from "./export-openapi.js"

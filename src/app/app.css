@@ -266,6 +266,7 @@ button[data-active="true"]:not(.danger):hover {
   min-height: 0;
   border-right: 1px solid #1e293b;
   overflow: auto;
+  overflow-anchor: none;
 }
 
 .record {
@@ -591,5 +592,160 @@ pre {
 
   .buttonLabel {
     width: 150px;
+  }
+}
+
+.sessionBar,
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid #1e293b;
+}
+.sessionBar label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sessionBar select {
+  max-width: 300px;
+}
+.sessionBar #captureTabs {
+  margin-left: auto;
+}
+.notice {
+  background: #422006;
+  color: #fef3c7;
+}
+.notice button {
+  margin-left: auto;
+}
+.comparisonLabel {
+  margin-top: 12px;
+  color: #99f6e4;
+  overflow-wrap: anywhere;
+}
+.inspectorDialog {
+  width: min(1100px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  color: #f4f4f5;
+  background: #101114;
+}
+.inspectorDialog::backdrop {
+  background: #000a;
+}
+.dialogHeader {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.dialogActions button {
+  overflow-wrap: anywhere;
+}
+.dialogError {
+  margin-top: 12px;
+  color: #fecaca;
+}
+.refreshTabs {
+  margin: 12px 0;
+}
+.tabStatus {
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+.tabStatus p {
+  color: #a1a1aa;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+.captureState {
+  display: inline-block;
+  border-radius: 20px;
+  padding: 3px 9px;
+  margin-left: 12px;
+  background: #27272a;
+}
+.state-attached {
+  color: #bbf7d0;
+  background: #052e16;
+}
+.state-failed {
+  color: #fecaca;
+  background: #450a0a;
+}
+.state-pending {
+  color: #fde68a;
+  background: #451a03;
+}
+.diffTable {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+.diffTable th,
+.diffTable td {
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #334155;
+  overflow-wrap: anywhere;
+}
+.diffTable th:first-child {
+  width: 26%;
+}
+.diffTable small {
+  display: block;
+  margin-top: 4px;
+  color: #a1a1aa;
+}
+.diffTable pre {
+  margin: 0;
+  max-height: 240px;
+}
+.diff-added td:last-child {
+  background: #052e16;
+}
+.diff-removed td:nth-child(2) {
+  background: #450a0a;
+}
+.diff-changed th {
+  color: #fde68a;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+@media (max-width: 760px) {
+  #app {
+    overflow: auto;
+  }
+  .layout {
+    flex: 1 0 600px;
+  }
+  .diffTable th,
+  .diffTable td {
+    padding: 4px;
+    font-size: 12px;
+  }
+  .sessionBar input,
+  .sessionBar select {
+    max-width: 100%;
   }
 }

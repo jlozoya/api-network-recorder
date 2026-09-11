@@ -30,7 +30,7 @@ const bundle = (entry: string) => {
                   contents:
                     path === "styles"
                       ? ""
-                      : "export const listNetworkRecords = async () => []; export const clearNetworkRecords = async () => {};",
+                      : "export const listNetworkRecords = async () => []; export const listNetworkRecordPreviews = (...args) => globalThis.testListRecords(...args); export const getNetworkRecordsByIds = async () => []; export const listSavedSessions = async () => []; export const saveSession = async () => {}; export const deleteSavedSession = async () => {}; export const setNetworkRecordPinned = async () => {}; export const clearNetworkRecords = async () => {};",
                 }))
               },
             },
@@ -61,7 +61,12 @@ class Element {
     return false
   }
 }
-const createUi = async (entry, sendMessage, tabs = [{ id: 1, url: "https://example.test/" }]) => {
+const createUi = async (
+  entry,
+  sendMessage,
+  tabs = [{ id: 1, url: "https://example.test/" }],
+  testListRecords = async () => [],
+) => {
   const selectors = entry.startsWith("popup")
     ? [
         "#captureBadge",
@@ -74,7 +79,7 @@ const createUi = async (entry, sendMessage, tabs = [{ id: 1, url: "https://examp
         "#toggleDeepCapture",
         ".deepCapture",
       ]
-    : ["#app", "#toggleDeepCapture"]
+    : ["#app", "#toggleDeepCapture", "#search"]
   const elements = new Map(selectors.map((selector) => [selector, new Element()]))
   if (elements.has("#summary")) elements.get("#summary").textContent = "Loading..."
   if (elements.has("#captureBadge")) elements.get("#captureBadge").textContent = "Checking"
@@ -91,6 +96,7 @@ const createUi = async (entry, sendMessage, tabs = [{ id: 1, url: "https://examp
   }
   const context = createContext({
     console,
+    testListRecords,
     URL,
     URLSearchParams,
     TextEncoder,
@@ -117,7 +123,11 @@ const createUi = async (entry, sendMessage, tabs = [{ id: 1, url: "https://examp
       intervals.push(callback)
       return intervals.length
     },
-    requestAnimationFrame: (callback) => callback(),
+    requestAnimationFrame: (callback) => {
+      callback()
+      return ++timerId
+    },
+    cancelAnimationFrame: () => {},
     getSelection: () => null,
     chrome: {
       runtime: { sendMessage: (message) => sendMessage(message, settings) },
@@ -294,4 +304,58 @@ test("global capture remains available without a web tab in the current window",
   await ui.elements.get("#toggleDeepCapture").handlers.get("click")()
   expect(requested).toContain("START_DEBUGGER_CAPTURE_ALL")
   expect(ui.elements.get("#captureBadge").textContent).toBe("Deep capture waiting for tabs")
+})
+
+test("inspector debounces search and ignores an older query that finishes last", async () => {
+  let finishOld
+  const requested = []
+  const preview = (id) => ({
+    id,
+    method: "GET",
+    url: "https://api.test/" + id,
+    source: "fetch",
+    status: 200,
+    completedAt: "2026-09-10",
+    startedAt: "2026-09-10",
+    requestBody: null,
+    responseBody: null,
+    requestHeaders: {},
+    responseHeaders: {},
+    detailsLoaded: false,
+    pinned: false,
+  })
+  const ui = await createUi("app/main.ts", defaultReply, undefined, async (options) => {
+    requested.push(options.search)
+    if (options.search === "old")
+      return await new Promise((resolve) => {
+        finishOld = resolve
+      })
+    return options.search === "new" ? [preview("new-result")] : []
+  })
+  const search = ui.elements.get("#search")
+  const input = (value) => {
+    search.value = value
+    search.handlers.get("input")({ target: search })
+  }
+  const debounce = () => {
+    const entry = [...ui.timers].find(([, timer]) => timer.duration === 300)
+    expect(entry).toBeDefined()
+    ui.timers.delete(entry[0])
+    entry[1].callback()
+  }
+  input("o")
+  input("ol")
+  input("old")
+  expect(requested).toEqual([""])
+  expect([...ui.timers.values()].filter((timer) => timer.duration === 300)).toHaveLength(1)
+  debounce()
+  await flush()
+  input("new")
+  debounce()
+  await flush()
+  expect(ui.elements.get("#app").innerHTML).toContain("new-result")
+  finishOld([preview("stale-result")])
+  await flush()
+  expect(ui.elements.get("#app").innerHTML).toContain("new-result")
+  expect(ui.elements.get("#app").innerHTML).not.toContain("stale-result")
 })

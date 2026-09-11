@@ -1,3 +1,4 @@
+import { getCaptureTabStatuses } from "../debugger/debugger-controller.js"
 import { isPageNetworkRecordMessage } from "../../core/record-validation.js"
 import type { CaptureSettings } from "../../storage/capture-settings.js"
 import { getCaptureSettings, setCaptureSettings } from "../../storage/capture-settings.js"
@@ -162,6 +163,11 @@ chrome.runtime.onMessage.addListener(
         message.type,
         25000,
       )
+      return true
+    }
+
+    if (message.type === "GET_CAPTURE_TABS_STATUS") {
+      respond(sendResponse, getCaptureTabStatuses(), message.type)
       return true
     }
 

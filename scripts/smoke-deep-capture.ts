@@ -1,9 +1,31 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import assert from "node:assert/strict"
 
+const fixtureBundlePath = resolve("dist/chrome/assets/inspector-smoke.js")
+const fixtureBundle = await Bun.build({
+  entrypoints: [resolve("scripts/inspector-browser-fixture.ts")],
+  target: "browser",
+  format: "esm",
+  plugins: [
+    {
+      name: "isolated-migration-db",
+      setup(build) {
+        build.onLoad({ filter: /storage[\\/]db\.ts$/ }, async (args) => ({
+          loader: "ts",
+          contents: (await readFile(args.path, "utf8")).replace(
+            'const DATABASE_NAME = "api-network-recorder-v2"',
+            'const DATABASE_NAME = globalThis.__recorderSmokeDbName ?? "api-network-recorder-v2"',
+          ),
+        }))
+      },
+    },
+  ],
+})
+assert(fixtureBundle.success, String(fixtureBundle.logs))
+await writeFile(fixtureBundlePath, await fixtureBundle.outputs[0]!.text())
 const profile = await mkdtemp(join(tmpdir(), "api-recorder-smoke-"))
 const extension = resolve("dist/chrome")
 const server = Bun.serve({
@@ -116,10 +138,15 @@ try {
   const { targetId } = await browserCommand("Target.createTarget", {
     url: extensionUrl + "/popup.html",
   })
-  const targets = await (await fetch(base + "/json/list")).json()
-  const command = await connect(
-    targets.find((target: any) => target.id === targetId).webSocketDebuggerUrl,
+  const popupTarget = await waitFor(
+    async () =>
+      (await (await fetch(base + "/json/list")).json()).find(
+        (target: any) => target.id === targetId && target.url === extensionUrl + "/popup.html",
+      ),
+    Boolean,
+    "Popup target",
   )
+  let command = await connect(popupTarget.webSocketDebuggerUrl)
   const evaluate = async (expression: string) => {
     const result = await command("Runtime.evaluate", {
       expression,
@@ -129,6 +156,7 @@ try {
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
     return result.result.value
   }
+  await waitFor(() => evaluate('typeof chrome?.tabs === "object"'), Boolean, "Extension APIs")
   const message = async (value: object) => {
     const response = await evaluate("chrome.runtime.sendMessage(" + JSON.stringify(value) + ")")
     assert.equal(response.ok, true, response.error)
@@ -209,8 +237,320 @@ try {
   console.log(
     JSON.stringify({ initialAttachedTabs: status.attachedCount, capturedTabs: 3, ignoredTabs: 1 }),
   )
+
+  const tabStatuses = await message({ type: "GET_CAPTURE_TABS_STATUS" })
+  assert.equal(tabStatuses.find((tab: any) => tab.tabId === ignored).state, "ignored")
+  assert.equal(tabStatuses.find((tab: any) => tab.tabId === first).state, "off")
+  // Load a test-only bundle. A separate module instance uses an isolated v1 database.
+  const migration = await evaluate(
+    '(async () => { globalThis.__recorderSmokeDbName = "api-recorder-migration-smoke"; const fixture = await import("./assets/inspector-smoke.js?migration"); delete globalThis.__recorderSmokeDbName; return fixture.migrationAndRetention() })()',
+  )
+  assert.equal(migration.migrated, true)
+  console.log("PASS: isolated IndexedDB migration and retention.")
+  await evaluate(
+    '(async () => { const fixture = await import("./assets/inspector-smoke.js"); await fixture.seedInspector() })()',
+  )
+  console.log("PASS: inspector fixture seeded.")
+  const { targetId: appTargetId } = await browserCommand("Target.createTarget", {
+    url: extensionUrl + "/app.html",
+  })
+  const appTarget = await waitFor(
+    async () =>
+      (await (await fetch(base + "/json/list")).json()).find(
+        (target: any) => target.id === appTargetId && target.url === extensionUrl + "/app.html",
+      ),
+    Boolean,
+    "Inspector target",
+  )
+  command = await connect(appTarget.webSocketDebuggerUrl)
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 3,
+    "Inspector records",
+  )
+  assert(
+    !(await evaluate('document.querySelector(".details").textContent.includes("bodyOnlyNeedle")')),
+    "Bodies rendered before selection",
+  )
+  await evaluate("document.querySelector('[data-id=\"ui-a\"]').click()")
+  await waitFor(
+    () => evaluate('document.querySelector(".details").textContent'),
+    (text) => text.includes("bodyOnlyNeedle"),
+    "Lazy details",
+  )
+  assert(
+    !(await evaluate('Boolean(document.querySelector(".details script"))')),
+    "Captured HTML was injected",
+  )
+  await evaluate('document.querySelector("#pinRequest").click()')
+  await waitFor(
+    () => evaluate('document.querySelector("#pinRequest")?.textContent'),
+    (text) => text === "Unpin request",
+    "Pinned request",
+  )
+  await evaluate(
+    'document.querySelector("#setBaseline").click(); document.querySelector(\'[data-id="ui-b"]\').click()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelector(".details").textContent'),
+    (text) => text.includes('"name": "ui-b"'),
+    "Second request details",
+  )
+  await evaluate('document.querySelector("#compareRequest").click()')
+  assert(
+    await evaluate(
+      'document.querySelector("dialog").textContent.includes("/responseBody/value/number")',
+    ),
+  )
+  await evaluate(
+    'document.querySelector("dialog").close(); const input = document.querySelector("#sessionName"); input.value = "UI saved session"; input.dispatchEvent(new Event("input")); document.querySelector("#saveSession").click()',
+  )
+  const savedId = await waitFor(
+    () => evaluate("document.querySelector('#sessionSelect option:nth-child(2)')?.value"),
+    Boolean,
+    "Saved session option",
+  )
+  await evaluate('document.querySelector("#clear").click()')
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 1,
+    "Clear preserves pin",
+  )
+  await evaluate(
+    'const select = document.querySelector("#sessionSelect"); select.value = ' +
+      JSON.stringify(savedId) +
+      '; select.dispatchEvent(new Event("change"))',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 3,
+    "Open saved session",
+  )
+  await evaluate("document.querySelector('[data-id=\"ui-b\"]').click()")
+  await waitFor(
+    () => evaluate('document.querySelector(".details").textContent'),
+    (text) => text.includes('"name": "ui-b"'),
+    "Saved response body",
+  )
+  await evaluate('document.querySelector("#exportOpenApi").click()')
+  assert.equal(await evaluate('document.querySelectorAll("dialog [data-origin]").length'), 2)
+  await evaluate(
+    'document.querySelector("dialog").close(); document.querySelector("#captureTabs").click()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".tabStatus").length'),
+    (count) => count > 0,
+    "Tab diagnostics",
+  )
+  await evaluate('document.querySelector("dialog").close()')
+
+  await evaluate(
+    '(() => { const liveSessionSelect = document.querySelector("#sessionSelect"); liveSessionSelect.value = ""; liveSessionSelect.dispatchEvent(new Event("change")) })()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 1,
+    "Return to live capture",
+  )
+  await evaluate(`
+    globalThis.__listScrollCalls = [];
+    globalThis.__listScrollSamples = [];
+    globalThis.__originalList = document.querySelector(".list");
+    globalThis.__originalRow = document.querySelector(".record");
+    const nativeScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function(optionsOrX, y) {
+      if (this.classList?.contains("list")) {
+        const options = typeof optionsOrX === "object"
+          ? optionsOrX
+          : { left: optionsOrX, top: y };
+        globalThis.__listScrollCalls.push({ ...options });
+        if (options.behavior === "smooth") {
+          const started = performance.now();
+          const sample = () => {
+            globalThis.__listScrollSamples.push({ top: this.scrollTop, connected: this.isConnected });
+            if (performance.now() - started < 1200) requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }
+      }
+      return nativeScrollTo.apply(this, arguments);
+    };
+  `)
+  await evaluate(
+    '(async () => { const fixture = await import("./assets/inspector-smoke.js?scroll"); await fixture.addInspectorRecords("scroll", 30, 100) })()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 31,
+    "Top-pinned refresh",
+  )
+  assert(
+    await evaluate(
+      'globalThis.__listScrollCalls.some(call => call.top === 0 && call.behavior === "smooth")',
+    ),
+    "A top-pinned list did not smoothly reveal new records",
+  )
+
+  await waitFor(
+    () => evaluate('document.querySelector(".list").scrollTop'),
+    (top) => top === 0,
+    "Native smooth scrolling finishes",
+  )
+  assert(
+    await evaluate('globalThis.__originalList === document.querySelector(".list") && globalThis.__originalRow.isConnected'),
+    "Live refresh replaced the list or an existing row",
+  )
+  assert(
+    await evaluate('new Set(globalThis.__listScrollSamples.map(sample => sample.top)).size > 3 && globalThis.__listScrollSamples.every(sample => sample.connected)'),
+    "Native scroll animation did not advance on the original list",
+  )
+
+  const beforeScroll = await evaluate(`
+    (async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const list = document.querySelector(".list");
+      list.scrollTop = Math.min(500, list.scrollHeight - list.clientHeight);
+      const top = list.getBoundingClientRect().top;
+      const item = [...list.querySelectorAll(".record[data-id]")]
+        .find(candidate => candidate.getBoundingClientRect().bottom > top);
+      item.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const restoredList = document.querySelector(".list");
+      const restoredItem = restoredList.querySelector('[data-id="' + item.dataset.id + '"]');
+      globalThis.__listScrollCalls = [];
+      return {
+        id: item.dataset.id,
+        offset: restoredItem.getBoundingClientRect().top - restoredList.getBoundingClientRect().top,
+        scrollTop: restoredList.scrollTop,
+      };
+    })()
+  `)
+  assert(beforeScroll.scrollTop > 8, "Scroll fixture did not move away from the top")
+  await evaluate(
+    '(async () => { const fixture = await import("./assets/inspector-smoke.js?scroll"); await fixture.addInspectorRecords("later", 1, 200) })()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 32,
+    "Scrolled refresh",
+  )
+  const anchorId = JSON.stringify(beforeScroll.id)
+  const afterScroll = await evaluate(`
+    (async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const list = document.querySelector(".list");
+      const id = ${anchorId};
+      const item = list.querySelector('[data-id="' + id + '"]');
+      return {
+        id,
+        offset: item?.getBoundingClientRect().top - list.getBoundingClientRect().top,
+        scrollTop: list.scrollTop,
+        smoothCalls: globalThis.__listScrollCalls.length,
+      };
+    })()
+  `)
+  assert.equal(afterScroll.id, beforeScroll.id)
+  assert(Math.abs(afterScroll.offset - beforeScroll.offset) <= 1, "Scrolled anchor moved")
+  assert(afterScroll.scrollTop > 8, "Scrolled list jumped to the top")
+  assert.equal(afterScroll.smoothCalls, 0, "Scrolled list triggered automatic scrolling")
+  const selectedAtTop = await evaluate(`
+    (async () => {
+      const list = document.querySelector(".list");
+      list.scrollTop = 0;
+      const item = list.querySelector(".record[data-id]");
+      item.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return item.dataset.id;
+    })()
+  `)
+  await waitFor(
+    () => evaluate('document.querySelector(".details").textContent'),
+    (text) => text.includes(selectedAtTop),
+    "Selected top request details",
+  )
+  await evaluate(`
+    globalThis.__listScrollCalls = [];
+    globalThis.__selectedNode = document.querySelector(".record.selected");
+    globalThis.__detailNode = document.querySelector(".details").firstElementChild;
+    globalThis.__insertAnimations = [];
+    const observer = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement && node.classList.contains("record")) {
+            globalThis.__insertAnimations.push(...node.getAnimations());
+          }
+        }
+      }
+    });
+    observer.observe(document.querySelector(".list"), { childList: true });
+  `)
+  await evaluate(
+    '(async () => { const fixture = await import("./assets/inspector-smoke.js?scroll"); await fixture.addInspectorRecords("selection-refresh", 1, 300) })()',
+  )
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 33,
+    "Selected top request refresh",
+  )
+  await waitFor(
+    () => evaluate('document.querySelector(".list").scrollTop'),
+    (top) => top === 0,
+    "Selected request refresh animation finishes",
+  )
+  assert(
+    await evaluate('globalThis.__selectedNode === document.querySelector(".record.selected") && globalThis.__detailNode === document.querySelector(".details").firstElementChild'),
+    "Live refresh replaced the selected row or its unchanged details",
+  )
+  assert(
+    await evaluate('globalThis.__insertAnimations.length > 0'),
+    "New records did not receive an entry animation",
+  )
+  const selectedAfterRefresh = await evaluate(`
+    (async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const list = document.querySelector(".list");
+      const item = list.querySelector(".record.selected");
+      return {
+        id: item?.dataset.id,
+        offset: item?.getBoundingClientRect().top - list.getBoundingClientRect().top,
+        smoothCalls: globalThis.__listScrollCalls.length,
+        details: document.querySelector(".details").textContent,
+      };
+    })()
+  `)
+  await evaluate(
+    '(async () => { const fixture = await import("./assets/inspector-smoke.js?scroll"); await fixture.addInspectorRecords("retention-refresh", 75, 400); await fixture.trimInspectorRecords() })()',
+  )
+  await waitFor(
+    () => evaluate('Boolean(document.querySelector(\'[data-id="retention-refresh-74"]\'))'),
+    Boolean,
+    "Refresh after selected request expires",
+  )
+  assert.equal(
+    await evaluate('document.querySelector(".record.selected")?.dataset.id'),
+    selectedAtTop,
+    "Automatic retention cleared the selected request",
+  )
+  assert(
+    await evaluate('document.querySelector(".details").textContent.includes(' + JSON.stringify(selectedAtTop) + ')'),
+    "Automatic retention cleared the selected details",
+  )
+  assert.equal(selectedAfterRefresh.id, selectedAtTop, "Selected request lost its highlight")
+  assert(selectedAfterRefresh.offset > 0, "New record was not revealed above the selection")
+  assert.equal(selectedAfterRefresh.smoothCalls, 1, "Selection disabled the smooth refresh animation")
+  assert(selectedAfterRefresh.details.includes(selectedAtTop), "Selected request lost its details")
+  // The test bundle is removed below; production releases contain only the built extension.
+  await evaluate(
+    "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+  )
+  const screenshot = await command("Page.captureScreenshot", { format: "png" })
+  await writeFile(resolve("dist/inspector-smoke.png"), Buffer.from(screenshot.data, "base64"))
+  console.log(
+    "PASS: v1 migration; metadata lists; pinned retention; atomic snapshots; body search; lazy inspector details; comparison; session reopen; per-origin export; tab diagnostics; stable list and detail nodes; native smooth scrolling; animated new records; selection retention.",
+  )
 } finally {
   if (browserCommand) await browserCommand("Browser.close").catch(() => {})
+  await unlink(fixtureBundlePath).catch(() => {})
   browser.kill()
   for (const socket of sockets) socket.close()
   server.stop(true)
