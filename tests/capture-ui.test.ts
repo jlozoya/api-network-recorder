@@ -220,6 +220,45 @@ test("inspector finishes its busy state even when capture produces no new record
   expect(ui.elements.get("#app").innerHTML).toContain("Stop deep capture")
   expect(ui.elements.get("#app").innerHTML).not.toContain("Working...")
 })
+test("capture failures keep the inspector usable and allow retrying start and stop", async () => {
+  let fail = true
+  const failure = "The extensions gallery cannot be scripted."
+  const ui = await createUi("app/main.ts", async (message, settings) => {
+    if (fail) return { ok: false, error: failure }
+    settings.deepCaptureEnabled = message.type === "START_DEBUGGER_CAPTURE_ALL"
+    return success(null)
+  })
+  const toggle = async () => {
+    ui.elements.get("#toggleDeepCapture").handlers.get("click")()
+    await flush()
+  }
+  const expectUsable = () => {
+    const html = ui.elements.get("#app").innerHTML
+    expect(html).toContain('class="layout"')
+    expect(html).toContain('id="search"')
+    expect(html).toContain('id="captureTabs"')
+    expect(html).not.toContain("Unable to load API Network Recorder")
+    expect(html).not.toContain("Reset local DB")
+    expect(html).not.toContain("Working...")
+    return html
+  }
+  await toggle()
+  expect(expectUsable()).toContain(failure)
+  expect(expectUsable()).toContain("Start deep capture")
+  fail = false
+  await toggle()
+  expect(expectUsable()).toContain("Stop deep capture")
+  expect(expectUsable()).not.toContain(failure)
+  fail = true
+  await toggle()
+  expect(expectUsable()).toContain(failure)
+  expect(expectUsable()).toContain("Stop deep capture")
+  fail = false
+  await toggle()
+  expect(expectUsable()).toContain("Start deep capture")
+  expect(expectUsable()).not.toContain(failure)
+})
+
 test("inspector refreshes changed capture settings without new records", async () => {
   const ui = await createUi("app/main.ts", async () => success(null))
   ui.settings.deepCaptureEnabled = true

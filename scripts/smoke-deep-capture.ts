@@ -282,6 +282,41 @@ try {
     !(await evaluate('Boolean(document.querySelector(".details script"))')),
     "Captured HTML was injected",
   )
+  // Reproduce a browser-denied capture without changing the temporary profile's data.
+  await evaluate(`
+    globalThis.__originalSendMessage = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = function(message, ...args) {
+      if (message.type === "START_DEBUGGER_CAPTURE_ALL")
+        return Promise.resolve({ ok: false, error: "The extensions gallery cannot be scripted." });
+      return globalThis.__originalSendMessage.call(chrome.runtime, message, ...args);
+    };
+    document.querySelector("#toggleDeepCapture").click();
+  `)
+  try {
+    await waitFor(
+      () => evaluate('document.querySelector(".notice")?.textContent'),
+      (text) => text?.includes("The extensions gallery cannot be scripted."),
+      "Recoverable capture error",
+    )
+    assert.equal(await evaluate('document.querySelectorAll(".record[data-id]").length'), 3)
+    assert.equal(await evaluate('document.querySelector(".record.selected")?.dataset.id'), "ui-a")
+    assert(await evaluate('document.querySelector(".details").textContent.includes("bodyOnlyNeedle")'))
+    assert.equal(await evaluate('Boolean(document.querySelector(".fatal, #resetLocalDb"))'), false)
+    assert.equal(await evaluate('document.querySelector("#toggleDeepCapture").disabled'), false)
+    const captureErrorScreenshot = await command("Page.captureScreenshot", { format: "png" })
+    await writeFile(
+      resolve("dist/capture-error-smoke.png"),
+      Buffer.from(captureErrorScreenshot.data, "base64"),
+    )
+    await evaluate('document.querySelector("#dismissNotice").click()')
+    assert.equal(await evaluate('Boolean(document.querySelector(".notice"))'), false)
+    console.log("PASS: capture denial preserves the inspector, selected record and details; notice can be dismissed.")
+  } finally {
+    await evaluate(`
+      chrome.runtime.sendMessage = globalThis.__originalSendMessage;
+      delete globalThis.__originalSendMessage;
+    `)
+  }
   await evaluate('document.querySelector("#pinRequest").click()')
   await waitFor(
     () => evaluate('document.querySelector("#pinRequest")?.textContent'),

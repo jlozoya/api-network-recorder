@@ -27,13 +27,31 @@ const isDebuggerCaptureSupported = (): boolean => {
   return Boolean(getDebuggerApi())
 }
 
-const isCapturableUrl = (url?: string): boolean => {
-  if (!url) {
-    return false
-  }
+const getCaptureIneligibleReason = (url?: string): string | null => {
+  const invalidUrlReason = "Only HTTP and HTTPS pages can be captured."
+  if (!url) return invalidUrlReason
 
-  return url.startsWith("http://") || url.startsWith("https://")
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return invalidUrlReason
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return invalidUrlReason
+
+  // Chromium protects both Web Store domains, including their subdomains.
+  const host = parsed.hostname.replace(/\.$/, "")
+  if (
+    ["chromewebstore.google.com", "chrome.google.com"].some(
+      (domain) => host === domain || host.endsWith("." + domain),
+    )
+  ) {
+    return "Chrome Web Store pages do not allow deep capture."
+  }
+  return null
 }
+
+const isCapturableUrl = (url?: string): boolean => getCaptureIneligibleReason(url) === null
 
 const getTab = async (tabId: number): Promise<chrome.tabs.Tab | null> => {
   try {
@@ -167,11 +185,11 @@ const connectDebuggerToTab = async (tabId: number, generation: number): Promise<
     3000,
     "Capture tab lookup",
   )
-  if (!tab || !isCapturableUrl(tab.url))
-    throw new Error("Deep capture only works on http/https tabs.")
+  const ineligibleReason = getCaptureIneligibleReason(tab?.url)
+  if (ineligibleReason) throw new Error(ineligibleReason)
   if (
     settings.ignoredTabIds.includes(tabId) ||
-    isUrlIgnoredByDomains(tab.url, settings.ignoredDomains)
+    isUrlIgnoredByDomains(tab?.url, settings.ignoredDomains)
   ) {
     throw new Error("This tab is ignored. Remove its ignore rule before starting deep capture.")
   }
@@ -386,14 +404,15 @@ export const getCaptureTabStatuses = async (): Promise<CaptureTabStatus[]> => {
   return tabs
     .filter((tab): tab is chrome.tabs.Tab & { id: number } => typeof tab.id === "number")
     .map((tab) => {
+      const ineligibleReason = getCaptureIneligibleReason(tab.url)
       let state: CaptureTabStatus["state"] = "off"
       let reason = "Deep capture is off."
       if (!isDebuggerCaptureSupported()) {
         state = "unsupported"
         reason = "This browser does not support deep capture."
-      } else if (!isCapturableUrl(tab.url)) {
+      } else if (ineligibleReason) {
         state = "ineligible"
-        reason = "Only HTTP and HTTPS pages can be captured."
+        reason = ineligibleReason
       } else if (
         settings.ignoredTabIds.includes(tab.id) ||
         isUrlIgnoredByDomains(tab.url, settings.ignoredDomains)

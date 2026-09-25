@@ -1253,6 +1253,7 @@ const bindEvents = (): void => {
 
     state.deepCaptureBusy = true
     state.deepCaptureEnabled = nextEnabled
+    state.notice = null
     render({
       preservePanelScroll: true,
     })
@@ -1268,8 +1269,9 @@ const bindEvents = (): void => {
       .catch((error: unknown) => {
         state.deepCaptureBusy = false
         state.deepCaptureEnabled = !nextEnabled
-        state.error = error instanceof Error ? error.message : String(error)
-        render()
+        const message = error instanceof Error ? error.message : String(error)
+        state.notice = `Could not ${nextEnabled ? "start" : "stop"} deep capture: ${message} Check Tab status for details.`
+        render({ preservePanelScroll: true })
       })
   })
 

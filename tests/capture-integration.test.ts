@@ -26,6 +26,7 @@ const event = () => {
   }
 }
 const attached = new Set<number>()
+const tabUrls = new Map<number, string>()
 const attachFailures = new Set<number>()
 const attachGates = new Map<number, Promise<void>>()
 let stallResponseBody = false
@@ -46,11 +47,11 @@ const debuggerApi = {
   onDetach: event(),
   getTargets: async () =>
     [...attached].map((tabId) => ({ tabId, attached: true, url: "https://example.test/" })),
-  attach: async ({ tabId }) => {
+  attach: mock(async ({ tabId }) => {
     await attachGates.get(tabId)
     if (attachFailures.has(tabId)) throw new Error("Debugger unavailable")
     attached.add(tabId)
-  },
+  }),
   detach: async ({ tabId }) => {
     detached.push(tabId)
     attached.delete(tabId)
@@ -74,8 +75,9 @@ Object.assign(globalThis, {
       onCreated: event(),
       onUpdated: event(),
       onRemoved: event(),
-      query: async () => [1, 2].map((id) => ({ id, url: "https://example.test/" })),
-      get: async (id) => ({ id, url: "https://example.test/" }),
+      query: async () =>
+        [1, 2].map((id) => ({ id, url: tabUrls.get(id) ?? "https://example.test/" })),
+      get: async (id) => ({ id, url: tabUrls.get(id) ?? "https://example.test/" }),
     },
     storage: {
       local: {
@@ -122,6 +124,8 @@ beforeEach(async () => {
   attachGates.clear()
   stallResponseBody = false
   await controller.stopDebuggerCaptureForAllTabs()
+  tabUrls.clear()
+  debuggerApi.attach.mockClear()
   records.length = 0
   streams.clear()
   detached.length = 0
@@ -173,6 +177,60 @@ test("keeps fallback when every debugger attach fails", async () => {
   await finishSilent(request("all-failed", 1))
   expect(records).toHaveLength(1)
 })
+test.each([
+  "https://chromewebstore.google.com/",
+  "https://chromewebstore.google.com/detail/example/id",
+  "https://chrome.google.com/webstore/detail/example/id",
+  "https://chrome.google.com/",
+  "https://sub.chromewebstore.google.com/",
+  "https://sub.chrome.google.com/webstore/",
+])("global capture skips restricted store page %s", async (url) => {
+  tabUrls.set(1, url)
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  expect(debuggerApi.attach.mock.calls.map(([target]) => target.tabId)).toEqual([2])
+  const statuses = await controller.getCaptureTabStatuses()
+  expect(statuses.find((tab) => tab.tabId === 1)).toMatchObject({
+    state: "ineligible",
+    reason: "Chrome Web Store pages do not allow deep capture.",
+  })
+  expect(statuses.find((tab) => tab.tabId === 2)?.state).toBe("attached")
+})
+
+test("store-only startup stays enabled for future eligible tabs", async () => {
+  tabUrls.set(1, "https://chromewebstore.google.com/")
+  tabUrls.set(2, "https://chrome.google.com/webstore/")
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  expect(controller.isDeepCaptureEnabled()).toBe(true)
+  expect(controller.getDebuggerCaptureStatus().attachedCount).toBe(0)
+  expect(debuggerApi.attach).not.toHaveBeenCalled()
+  chrome.tabs.onCreated.emit({ id: 3, url: "https://example.test/" })
+  await settle()
+  expect(controller.isDebuggerAttached(3)).toBe(true)
+  chrome.tabs.onUpdated.emit(1, { url: tabUrls.get(1) }, { status: "loading" })
+  await settle()
+  expect(debuggerApi.attach.mock.calls.map(([target]) => target.tabId)).toEqual([3])
+})
+
+test("starting a store tab directly reports why it cannot be captured", async () => {
+  tabUrls.set(1, "https://chromewebstore.google.com/")
+  await expect(controller.startDebuggerCapture(1)).rejects.toThrow(
+    "Chrome Web Store pages do not allow deep capture.",
+  )
+  expect(debuggerApi.attach).not.toHaveBeenCalled()
+  expect(controller.isDeepCaptureEnabled()).toBe(false)
+})
+
+test.each([
+  "https://example.test/?next=https://chromewebstore.google.com/",
+  "https://chromewebstore.google.com.example.test/",
+  "https://chrome.google.com.example.test/webstore/",
+  "http://localhost:3000/",
+])("store exclusions preserve eligible URL %s", async (url) => {
+  tabUrls.set(1, url)
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  expect(controller.isDebuggerAttached(1)).toBe(true)
+})
+
 test("detaches if Network.enable fails and keeps silent capture", async () => {
   enableFailures.add(2)
   await controller.startDebuggerCaptureForAllAvailableTabs()
