@@ -40,7 +40,7 @@ await run(process.execPath, [
   "--no-compile-autoload-bunfig",
   "--windows-hide-console",
   "--windows-title=API Network Recorder AI Integration",
-  "--windows-version=0.4.0.0",
+  "--windows-version=0.4.1.0",
   "native/main.ts",
   "--outfile",
   "dist/native/api-network-recorder-bridge.exe",

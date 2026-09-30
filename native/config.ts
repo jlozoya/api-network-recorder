@@ -5,7 +5,7 @@ import { z } from "zod"
 
 export const HOST_NAME = "com.api_network_recorder.bridge"
 export const MCP_NAME = "api-network-recorder"
-export const VERSION = "0.4.0"
+export const VERSION = "0.4.1"
 export const extensionIdSchema = z.string().regex(/^[a-p]{32}$/)
 export const profileIdSchema = z.string().uuid()
 export const configSchema = z

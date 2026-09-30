@@ -200,7 +200,7 @@ export const installInteractive = (): void => {
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ApiNetworkRecorderBridge"
     for (const [name, value] of Object.entries({
       DisplayName: "API Network Recorder AI Integration",
-      DisplayVersion: "0.4.0",
+      DisplayVersion: "0.4.1",
       Publisher: "API Network Recorder",
       UninstallString: `"${executable}" --uninstall-ui`,
     })) {
