@@ -322,6 +322,11 @@ try {
     "Inspector target",
   )
   command = await connect(appTarget.webSocketDebuggerUrl)
+  if (process.env.SMOKE_REDUCED_MOTION === "1") {
+    await command("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    })
+  }
   await waitFor(
     () => evaluate('document.querySelectorAll(".record[data-id]").length'),
     (count) => count === 3,
@@ -599,8 +604,8 @@ try {
     "Live refresh replaced the selected row or its unchanged details",
   )
   assert(
-    await evaluate('globalThis.__insertAnimations.length > 0'),
-    "New records did not receive an entry animation",
+    await evaluate('window.matchMedia("(prefers-reduced-motion: reduce)").matches ? globalThis.__insertAnimations.length === 0 : globalThis.__insertAnimations.length > 0'),
+    "New record animations did not respect the reduced-motion preference",
   )
   const selectedAfterRefresh = await evaluate(`
     (async () => {
