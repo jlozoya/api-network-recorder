@@ -419,6 +419,12 @@ document.querySelector("#openApp")?.addEventListener("click", () => {
   })
 })
 
+document.querySelector("#openAgent")?.addEventListener("click", () => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL("agent.html") }).catch((error: unknown) => {
+    setError(error instanceof Error ? error.message : String(error))
+  })
+})
+
 document.querySelector("#clear")?.addEventListener("click", async () => {
   try {
     setError(null)

@@ -1,7 +1,12 @@
-import { getCaptureTabStatuses } from "../debugger/debugger-controller.js"
+import { getCaptureTabStatuses, isDebuggerAttached } from "../debugger/debugger-controller.js"
+import { getNativeBridgeStatus, setNativeBridgeEnabled } from "../native/native-bridge.js"
 import { isPageNetworkRecordMessage } from "../../core/record-validation.js"
 import type { CaptureSettings } from "../../storage/capture-settings.js"
-import { getCaptureSettings, setCaptureSettings } from "../../storage/capture-settings.js"
+import {
+  getCaptureSettings,
+  setCaptureSettings,
+  isUrlIgnoredByDomains,
+} from "../../storage/capture-settings.js"
 import type { ExtensionMessage, ExtensionResponse } from "../../core/message-types.js"
 import type { NetworkRecord } from "../../core/network-types.js"
 import {
@@ -65,6 +70,35 @@ chrome.runtime.onMessage.addListener(
   ): boolean => {
     if (!message || typeof message !== "object") return false
 
+    if (message.type === "GET_NATIVE_BRIDGE_STATUS" || message.type === "SET_NATIVE_BRIDGE_ENABLED") {
+      if (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL(""))) return false
+      respond(
+        sendResponse,
+        message.type === "SET_NATIVE_BRIDGE_ENABLED"
+          ? setNativeBridgeEnabled(message.payload.enabled).then(getNativeBridgeStatus)
+          : Promise.resolve(getNativeBridgeStatus()),
+        message.type,
+      )
+      return true
+    }
+
+    if (message.type === "GET_PAGE_CAPTURE_STATE") {
+      respond(
+        sendResponse,
+        getCaptureSettings().then((settings) => ({
+          enabled:
+            settings.deepCaptureEnabled &&
+            !settings.capturePaused &&
+            typeof sender.tab?.id === "number" &&
+            !isDebuggerAttached(sender.tab.id) &&
+            !settings.ignoredTabIds.includes(sender.tab.id) &&
+            !isUrlIgnoredByDomains(sender.url, settings.ignoredDomains),
+        })),
+        message.type,
+      )
+      return true
+    }
+
     if (message.type === "NETWORK_RECORD_CREATED") {
       if (
         !isPageNetworkRecordMessage(message) ||
@@ -86,7 +120,11 @@ chrome.runtime.onMessage.addListener(
 
       respond(
         sendResponse,
-        saveNetworkRecord(record).then(() => null),
+        getCaptureSettings().then(async (settings) => {
+          // Page hooks may outlive an unregister/stop; the background remains authoritative.
+          if (settings.deepCaptureEnabled) await saveNetworkRecord(record)
+          return null
+        }),
         message.type,
       )
       return true

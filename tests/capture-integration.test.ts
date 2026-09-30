@@ -9,6 +9,9 @@ mock.module("../src/storage/network-record-repository.ts", () => ({
     records.push(record)
   },
   listNetworkRecords: async () => records,
+  listNetworkRecordPreviews: async () => [],
+  getNetworkRecordsByIds: async () => [],
+  listSavedSessions: async () => [],
   getNetworkRecordSummary: async () => {
     const result = createNetworkRecordSummary()
     records.forEach(result.add)
@@ -27,6 +30,7 @@ const event = () => {
 }
 const attached = new Set<number>()
 const tabUrls = new Map<number, string>()
+const pendingUrls = new Map<number, string>()
 const attachFailures = new Set<number>()
 const attachGates = new Map<number, Promise<void>>()
 let stallResponseBody = false
@@ -57,6 +61,7 @@ const debuggerApi = {
     attached.delete(tabId)
   },
   sendCommand: mock(async ({ tabId }, method) => {
+    if (method === "Network.enable" && !attached.has(tabId)) throw new Error("Debugger is not attached")
     if (method === "Network.enable" && enableFailures.has(tabId))
       throw new Error("Network.enable failed")
     if (method === "Network.getResponseBody" && stallResponseBody) return new Promise(() => {})
@@ -77,7 +82,7 @@ Object.assign(globalThis, {
       onRemoved: event(),
       query: async () =>
         [1, 2].map((id) => ({ id, url: tabUrls.get(id) ?? "https://example.test/" })),
-      get: async (id) => ({ id, url: tabUrls.get(id) ?? "https://example.test/" }),
+      get: async (id) => ({ id, url: tabUrls.get(id) ?? "https://example.test/", pendingUrl: pendingUrls.get(id) }),
     },
     storage: {
       local: {
@@ -125,6 +130,7 @@ beforeEach(async () => {
   stallResponseBody = false
   await controller.stopDebuggerCaptureForAllTabs()
   tabUrls.clear()
+  pendingUrls.clear()
   debuggerApi.attach.mockClear()
   records.length = 0
   streams.clear()
@@ -280,6 +286,7 @@ test("runtime rejects malformed page payloads before persistence", async () => {
   expect(response.mock.calls[0][0].ok).toBe(false)
 })
 test("runtime replaces page-controlled IDs and frame context", async () => {
+  storage = { apiNetworkRecorderSettings: { deepCaptureEnabled: true } }
   const response = mock(() => {})
   const message = pageMessage()
   const sender = {
@@ -471,4 +478,88 @@ test("global capture waits for new eligible tabs when all existing tabs are igno
   expect(controller.isDebuggerAttached(3)).toBe(true)
   expect(controller.isDebuggerAttached(1)).toBe(false)
   expect(controller.isDebuggerAttached(2)).toBe(false)
+})
+
+test("a new tab connects using its pending URL before a page has committed", async () => {
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  tabUrls.set(3, "")
+  pendingUrls.set(3, "https://example.test/new")
+  chrome.tabs.onCreated.emit({ id: 3, url: "", pendingUrl: pendingUrls.get(3) })
+  await settle()
+  expect(controller.isDebuggerAttached(3)).toBe(true)
+})
+
+test("completion retries a tab whose early connection failed", async () => {
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  attachFailures.add(3)
+  chrome.tabs.onCreated.emit({ id: 3, url: "https://example.test/new" })
+  await settle()
+  expect(controller.isDebuggerAttached(3)).toBe(false)
+  attachFailures.delete(3)
+  chrome.tabs.onUpdated.emit(3, { status: "complete" }, { id: 3, url: "https://example.test/new", status: "complete" })
+  await settle()
+  expect(controller.isDebuggerAttached(3)).toBe(true)
+  expect(controller.getDebuggerCaptureStatus(3).error).toBeNull()
+})
+
+test("reload restores a lost debugger session instead of trusting the tab cache", async () => {
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  attached.delete(1)
+  debuggerApi.attach.mockClear()
+  chrome.tabs.onUpdated.emit(1, { status: "loading" }, { id: 1, url: "https://example.test/", status: "loading" })
+  await settle()
+  expect(debuggerApi.attach.mock.calls.map(([target]) => target.tabId)).toContain(1)
+  expect(controller.isDebuggerAttached(1)).toBe(true)
+  expect(attached.has(1)).toBe(true)
+})
+
+test("replacement targets reconnect but a manual cancellation leaves capture off", async () => {
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  attached.delete(1)
+  debuggerApi.onDetach.emit({ tabId: 1 }, "target_closed")
+  await settle()
+  expect(controller.isDebuggerAttached(1)).toBe(true)
+  debuggerApi.onDetach.emit({ tabId: 1 }, "canceled_by_user")
+  await settle()
+  expect(controller.isDeepCaptureEnabled()).toBe(false)
+  expect(controller.getDebuggerCaptureStatus().attachedCount).toBe(0)
+})
+
+test("page hooks stop persisting records when deep capture is off", async () => {
+  const response = mock(() => {})
+  runtime.onMessage.emit(pageMessage(), { tab: { id: 1 }, url: "https://example.test/" }, response)
+  await settle()
+  expect(response.mock.calls[0][0].ok).toBe(true)
+  expect(records).toHaveLength(0)
+})
+
+test("page fallback is active only while deep capture is awaiting a debugger connection", async () => {
+  storage = { apiNetworkRecorderSettings: { deepCaptureEnabled: true, ignoredTabIds: [42] } }
+  const state = async (tabId) => {
+    const response = mock(() => {})
+    runtime.onMessage.emit({ type: "GET_PAGE_CAPTURE_STATE" }, { tab: { id: tabId }, url: "https://example.test/" }, response)
+    await settle()
+    return response.mock.calls[0][0].data.enabled
+  }
+  expect(await state(3)).toBe(true)
+  expect(await state(42)).toBe(false)
+  await controller.startDebuggerCaptureForAllAvailableTabs()
+  expect(await state(1)).toBe(false)
+  storage.apiNetworkRecorderSettings.capturePaused = true
+  expect(await state(3)).toBe(false)
+})
+
+test("debugger request IDs are isolated across tabs", async () => {
+  const body = spyOn(debuggerApi, "sendCommand").mockImplementation(async ({ tabId }) => ({ body: JSON.stringify({ tabId }), base64Encoded: false }))
+  try {
+    for (const tabId of [1, 2]) {
+      await handleDebuggerEvent(tabId, "Network.requestWillBeSent", { requestId: "shared-id", request: { url: `https://example.test/api/${tabId}`, method: "GET" } })
+      await handleDebuggerEvent(tabId, "Network.responseReceived", { requestId: "shared-id", response: { status: 200, mimeType: "application/json" } })
+    }
+    for (const tabId of [1, 2]) await handleDebuggerEvent(tabId, "Network.loadingFinished", { requestId: "shared-id" })
+    expect(records.map((record) => [record.tabId, record.url, record.responseBody.value])).toEqual([
+      [1, "https://example.test/api/1", { tabId: 1 }],
+      [2, "https://example.test/api/2", { tabId: 2 }],
+    ])
+  } finally { body.mockRestore() }
 })

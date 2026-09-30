@@ -706,6 +706,7 @@ const renderToolbar = (): string => {
       <button id="saveSession" type="button" ${state.records.length ? "" : "disabled"}>Save session visible requests</button>
       ${state.sessionId ? '<button id="deleteSession" class="danger" type="button">Delete session</button>' : ""}
       <button id="captureTabs" type="button">Tab status</button>
+      <button id="openAgent" type="button">AI access</button>
     </section>
     ${state.notice ? `<div class="notice" role="status">${escapeHtml(state.notice)}<button id="dismissNotice" type="button">Dismiss</button></div>` : ""}
     <nav class="tabs">
@@ -1219,6 +1220,14 @@ const bindEvents = (): void => {
   })
   unboundControls.querySelector("#captureTabs")?.addEventListener("click", () => {
     void showCaptureTabs()
+  })
+  unboundControls.querySelector("#openAgent")?.addEventListener("click", () => {
+    void chrome.tabs
+      .create({ url: chrome.runtime.getURL("agent.html") })
+      .catch((error: unknown) => {
+        state.notice = error instanceof Error ? error.message : String(error)
+        render({ preservePanelScroll: true })
+      })
   })
 
   unboundControls.querySelector("#toggleListening")?.addEventListener("click", () => {

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI access — API Network Recorder</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>AI access</h1>
+          <p>API Network Recorder</p>
+        </div>
+        <a href="app.html">Open inspector</a>
+      </header>
+
+      <section id="localIntegration" aria-labelledby="integrationHeading">
+        <h2 id="integrationHeading">Connect to Codex</h2>
+        <p>Install the local integration once. Codex connects automatically while Chrome is open.</p>
+        <div class="actions">
+          <a href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe" target="_blank" rel="noopener">Install AI integration for Windows</a>
+          <button id="connectIntegration" type="button">Connect integration</button>
+          <button id="disconnectIntegration" type="button">Disconnect integration</button>
+          <button id="refreshIntegration" type="button">Refresh connection</button>
+        </div>
+        <p id="integrationNotice" role="status">Checking connection…</p>
+      </section>
+
+      <section aria-labelledby="instructionsHeading">
+        <h2 id="instructionsHeading">Connect through your browser</h2>
+        <p>
+          Open this address with your agent's browser tool using the profile where the extension is
+          installed.
+        </p>
+        <label for="agentUrl">Page address</label>
+        <input id="agentUrl" type="text" readonly />
+        <p>
+          Use Search requests to find captured calls, then select a request to view its headers and
+          bodies in Request JSON. Search again to refresh the results.
+        </p>
+      </section>
+
+      <section aria-labelledby="captureHeading">
+        <h2 id="captureHeading">Capture controls</h2>
+        <p>Controls affect live capture across tabs. Existing exclusions are respected.</p>
+        <div class="actions">
+          <button id="startRecording" type="button">Start recording</button>
+          <button id="stopRecording" type="button">Stop recording</button>
+          <button id="refreshStatus" type="button">Refresh capture status</button>
+        </div>
+        <div id="deepControls" hidden>
+          <p>Enable deep capture to include response bodies.</p>
+          <div class="actions">
+            <button id="startDeepCapture" type="button">Start deep capture</button>
+            <button id="stopDeepCapture" type="button">Stop deep capture</button>
+          </div>
+        </div>
+        <p id="captureNotice" role="status">Loading capture status…</p>
+        <details>
+          <summary>Capture status JSON</summary>
+          <pre id="captureStatus" aria-label="Capture status JSON">null</pre>
+        </details>
+      </section>
+
+      <section aria-labelledby="searchHeading">
+        <h2 id="searchHeading">Search captured requests</h2>
+        <form id="searchForm">
+          <div class="filters">
+            <label
+              >Session
+              <select id="session">
+                <option value="">Live capture</option>
+              </select></label
+            >
+            <label
+              >Search URL or body <input id="search" type="search" placeholder="/api/patients"
+            /></label>
+            <label
+              >Method
+              <select id="method">
+                <option value="ALL">All methods</option>
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option>
+                <option>HEAD</option>
+                <option>OPTIONS</option>
+              </select></label
+            >
+            <label
+              >Status
+              <select id="statusGroup">
+                <option value="all">All statuses</option>
+                <option value="success">2xx success</option>
+                <option value="redirect">3xx redirect</option>
+                <option value="client-error">4xx client error</option>
+                <option value="server-error">5xx server error</option>
+                <option value="error">Network error / no status</option>
+              </select></label
+            >
+            <label>Host <input id="host" type="text" placeholder="api.example.com" /></label>
+            <label
+              >Requests per page
+              <select id="pageSize">
+                <option>10</option>
+                <option selected>25</option>
+                <option>50</option>
+                <option>100</option>
+              </select></label
+            >
+          </div>
+          <div class="actions">
+            <label class="checkbox"
+              ><input id="apiOnly" type="checkbox" checked /> API requests only</label
+            >
+            <button id="searchRequests" type="submit">Search requests</button>
+          </div>
+        </form>
+        <p id="sessionNotice" role="status" hidden></p>
+        <p id="listNotice" role="status">Loading requests…</p>
+        <div class="actions">
+          <button id="previousPage" type="button" disabled>Previous page</button>
+          <button id="nextPage" type="button" disabled>Next page</button>
+        </div>
+        <ul id="requestList" aria-label="Captured requests"></ul>
+        <details open>
+          <summary>Requests JSON</summary>
+          <pre id="requestsJson" aria-label="Requests JSON">null</pre>
+        </details>
+      </section>
+
+      <section aria-labelledby="requestHeading">
+        <h2 id="requestHeading">Request details</h2>
+        <form id="requestForm" class="actions">
+          <label>Request ID <input id="requestId" type="text" required /></label>
+          <button id="getRequest" type="submit">Get request</button>
+        </form>
+        <p id="detailNotice" role="status">Select a request or enter its ID.</p>
+        <pre id="requestJson" aria-label="Request JSON">null</pre>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

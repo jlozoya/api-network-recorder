@@ -2,6 +2,7 @@ import type { ExtensionMessage } from "../core/message-types.js"
 import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
 import {
   postNetworkRecordMessage,
+  isPageCaptureEnabled,
   redactHeaders,
   toCapturedBodyFromBytes,
   toCapturedTextBody,
@@ -85,6 +86,7 @@ export const patchXhr = (): void => {
     const originalSend = xhr.send.bind(xhr)
 
     xhr.send = function patchedSend(body?: Document | XMLHttpRequestBodyInit | null): void {
+      if (!isPageCaptureEnabled()) return originalSend(body)
       startedAt = new Date().toISOString()
       startedAtMs = performance.now()
 

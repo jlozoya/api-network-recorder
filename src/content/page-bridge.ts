@@ -58,6 +58,30 @@ const sendToBackground = async (message: ExtensionMessage): Promise<void> => {
   }
 }
 
+const updatePageCapture = async (): Promise<void> => {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_PAGE_CAPTURE_STATE" })
+    window.postMessage(
+      {
+        source: "API_NETWORK_RECORDER_CONTROL",
+        enabled: response?.ok === true && response.data?.enabled === true,
+      },
+      "*",
+    )
+  } catch {
+    // An old content script may outlive an extension update.
+  }
+}
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (sender.id === chrome.runtime.id && message?.type === "PAGE_CAPTURE_STATE") {
+    void updatePageCapture()
+  }
+})
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.apiNetworkRecorderSettings) void updatePageCapture()
+})
+void updatePageCapture()
+
 window.addEventListener("message", (event: MessageEvent) => {
   try {
     const data = event.data

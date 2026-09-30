@@ -8,7 +8,7 @@ import { normalizeEndpointPath } from "../../core/endpoint-utils.js"
 import type { CapturedBody, HeaderMap, NetworkRecord } from "../../core/network-types.js"
 import { redactHeaders } from "../../core/redaction.js"
 import { saveNetworkRecord } from "../../storage/network-record-repository.js"
-import { isDebuggerAttached } from "../debugger/debugger-controller.js"
+import { ensureDebuggerCaptureForTab, isDebuggerAttached } from "../debugger/debugger-controller.js"
 
 interface PendingWebRequest {
   requestId: string
@@ -325,6 +325,11 @@ const startFirefoxResponseBodyCapture = (pending: PendingWebRequest): void => {
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
+    if (details.type === "main_frame" && isCapturableTab(details.tabId)) {
+      void ensureDebuggerCaptureForTab(details.tabId, true).catch(() => {
+        // A navigation may start before tabs.onCreated exposes the pending URL.
+      })
+    }
     if (!isCapturableTab(details.tabId) || shouldSkipSilentCapture(details.tabId)) {
       return
     }

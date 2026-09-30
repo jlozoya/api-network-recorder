@@ -26,17 +26,23 @@ const includedRootFiles = new Set([
   "bun.lock",
   "package.json",
   "tsconfig.json",
+  "tsconfig.native.json",
   "vite.config.ts",
   "manifest.chrome.config.ts",
   "manifest.firefox.config.ts",
   "README.md",
   "PRIVACY.md",
+  "THIRD_PARTY_NOTICES.txt",
 ])
 
 const includedRootDirectories = new Set([
   "src",
   "public",
   "scripts",
+  "native",
+  "installer",
+  "tests",
+  ".github",
 ])
 
 interface PackageJson {

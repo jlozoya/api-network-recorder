@@ -157,3 +157,30 @@ export const addInspectorRecords = async (prefix: string, count: number, startOf
 }
 
 export const trimInspectorRecords = () => repository.trimNetworkRecords()
+
+export const seedAgent = async () => {
+  await setCaptureSettings({ capturePaused: false, captureActiveSince: null })
+  // This fixture shares only the test profile with the preceding pin-retention checks.
+  for (const preview of await repository.listNetworkRecordPreviews()) {
+    if (preview.pinned) await repository.setNetworkRecordPinned(preview.id, false)
+  }
+  await repository.clearNetworkRecords()
+  for (let index = 0; index < 31; index++) {
+    await repository.saveNetworkRecord({
+      ...record(`agent-${index}`, index),
+      method: index === 0 ? "POST" : "GET",
+      status: index % 3 === 0 ? 500 : 200,
+    })
+  }
+  const session = await repository.saveSession("Agent snapshot", ["agent-0", "agent-1"])
+  await repository.saveNetworkRecord({
+    ...record("agent-0"),
+    responseBody: { kind: "unavailable", reason: "Response body not captured" },
+  })
+  await repository.saveNetworkRecord({
+    ...record("agent-truncated", 40),
+    requestBody: null,
+    responseBody: { kind: "text", value: "partial", truncated: true, sizeBytes: 500 },
+  })
+  return session.id
+}

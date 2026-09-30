@@ -12,6 +12,9 @@ export interface ListNetworkRecordsPayload {
 }
 
 export type ExtensionMessage =
+  | { type: "GET_NATIVE_BRIDGE_STATUS" }
+  | { type: "SET_NATIVE_BRIDGE_ENABLED"; payload: { enabled: boolean } }
+  | { type: "GET_PAGE_CAPTURE_STATE" }
   | { type: "GET_CAPTURE_TABS_STATUS" }
   | { type: "GET_RECORD_SUMMARY" }
   | {

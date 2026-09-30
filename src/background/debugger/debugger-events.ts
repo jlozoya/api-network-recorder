@@ -8,6 +8,12 @@ import type { PendingDebuggerRequest } from "./debugger-types.js"
 
 const pendingRequests = new Map<string, PendingDebuggerRequest>()
 
+export const clearDebuggerRequestsForTab = (tabId: number): void => {
+  for (const [key, request] of pendingRequests) {
+    if (request.tabId === tabId) pendingRequests.delete(key)
+  }
+}
+
 const normalizeHeaders = (headers: unknown): HeaderMap => {
   if (!headers || typeof headers !== "object") {
     return {}
@@ -127,6 +133,7 @@ export const handleDebuggerEvent = async (
 ): Promise<void> => {
   const event = params as Record<string, unknown>
   const requestId = getString(event.requestId)
+  const key = `${tabId}:${requestId}`
 
   if (!requestId) {
     return
@@ -138,7 +145,7 @@ export const handleDebuggerEvent = async (
     const frameId = getNumber(event.frameId)
     const documentUrl = getString(event.documentURL, "")
 
-    pendingRequests.set(requestId, {
+    pendingRequests.set(key, {
       requestId,
       tabId,
       frameId,
@@ -163,12 +170,10 @@ export const handleDebuggerEvent = async (
   }
 
   if (method === "Network.responseReceived") {
-    const pending = pendingRequests.get(requestId)
-
+    const pending = pendingRequests.get(key)
     if (!pending) {
       return
     }
-
     const response = event.response as Record<string, unknown> | undefined
 
     pending.responseHeaders = redactHeaders(normalizeHeaders(response?.headers))
@@ -182,13 +187,13 @@ export const handleDebuggerEvent = async (
   }
 
   if (method === "Network.loadingFinished") {
-    const pending = pendingRequests.get(requestId)
+    const pending = pendingRequests.get(key)
 
     if (!pending) {
       return
     }
 
-    pendingRequests.delete(requestId)
+    pendingRequests.delete(key)
 
     let responseBody: NetworkRecord["responseBody"] = unavailableBody("Response body unavailable")
 
@@ -228,13 +233,13 @@ export const handleDebuggerEvent = async (
   }
 
   if (method === "Network.loadingFailed") {
-    const pending = pendingRequests.get(requestId)
+    const pending = pendingRequests.get(key)
 
     if (!pending) {
       return
     }
 
-    pendingRequests.delete(requestId)
+    pendingRequests.delete(key)
 
     const errorText = getString(event.errorText, "Chrome debugger reported a failed request")
     const record = await buildRecord(pending, unavailableBody(errorText), errorText)

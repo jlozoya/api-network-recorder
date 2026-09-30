@@ -1,0 +1,155 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  background: #101114;
+  color: #f4f4f5;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+}
+main {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+}
+header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+h1 {
+  margin: 0;
+  font-size: 28px;
+}
+h2 {
+  margin-top: 0;
+  font-size: 19px;
+}
+p {
+  color: #b9bdc8;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+a {
+  color: #9cc5ff;
+}
+section {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #353944;
+  border-radius: 12px;
+  background: #191c23;
+}
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
+}
+button,
+input,
+select {
+  font: inherit;
+  border: 1px solid #4a5160;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #252a35;
+  color: inherit;
+}
+input,
+select {
+  width: 100%;
+  min-width: 0;
+}
+button {
+  cursor: pointer;
+}
+button:hover {
+  background: #333d50;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid #9cc5ff;
+  outline-offset: 3px;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-top: 14px;
+}
+.actions label:not(.checkbox) {
+  flex: 1;
+  min-width: min(240px, 100%);
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  align-self: center;
+}
+.checkbox input {
+  width: auto;
+}
+summary {
+  cursor: pointer;
+  padding: 14px 0;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border: 1px solid #353944;
+  border-radius: 8px;
+  padding: 16px;
+  background: #111318;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 600px;
+  overflow: auto;
+}
+ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+li {
+  min-width: 0;
+}
+li button {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  main {
+    padding: 12px;
+  }
+  section {
+    padding: 14px;
+  }
+  .filters {
+    grid-template-columns: 1fr;
+  }
+}

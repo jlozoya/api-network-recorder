@@ -45,9 +45,11 @@ const copyIcons = (): void => {
 const normalizeHtmlOutputs = (): void => {
   const generatedPopupHtml = resolve(outDir, "src", "popup", "popup.html")
   const generatedAppHtml = resolve(outDir, "src", "app", "index.html")
+  const generatedAgentHtml = resolve(outDir, "src", "agent", "index.html")
 
   copyFile(generatedPopupHtml, resolve(outDir, "popup.html"))
   copyFile(generatedAppHtml, resolve(outDir, "app.html"))
+  copyFile(generatedAgentHtml, resolve(outDir, "agent.html"))
 
   rmSync(resolve(outDir, "src"), {
     recursive: true,
@@ -92,6 +94,7 @@ export default defineConfig({
         injected: resolve("src/injected/index.ts"),
         popup: resolve("src/popup/popup.html"),
         app: resolve("src/app/index.html"),
+        agent: resolve("src/agent/index.html"),
       },
       output: {
         entryFileNames: "assets/[name].js",

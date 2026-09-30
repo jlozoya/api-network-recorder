@@ -9,12 +9,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   })
 })
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!changeInfo.url && tab.status !== "loading") {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url && changeInfo.status !== "loading" && changeInfo.status !== "complete") {
     return
   }
 
-  void ensureDebuggerCaptureForTab(tabId).catch(() => {
+  void ensureDebuggerCaptureForTab(
+    tabId,
+    Boolean(changeInfo.url) || changeInfo.status === "loading",
+  ).catch(() => {
     // The tab may not be capturable yet, or another debugger may own it.
   })
 })

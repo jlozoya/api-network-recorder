@@ -2,6 +2,7 @@ import type { ExtensionMessage } from "../core/message-types.js"
 import type { HeaderMap, NetworkRecord } from "../core/network-types.js"
 import {
   postNetworkRecordMessage,
+  isPageCaptureEnabled,
   redactHeaders,
   toCapturedBodyFromBytes,
   toCapturedTextBody,
@@ -220,6 +221,7 @@ export const patchFetch = (): void => {
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
+    if (!isPageCaptureEnabled()) return originalFetch.call(this, input, init)
     const startedAtMs = performance.now()
     const startedAt = new Date().toISOString()
     const request = safeSnapshotFetchRequest(input, init)

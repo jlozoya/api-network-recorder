@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Effective date: May 2026
+Effective date: September 30, 2026
 
 ## API Network Recorder
 
@@ -40,6 +40,7 @@ Captured data is used only for the extension’s core functionality:
 - Exporting API documentation as Markdown
 - Exporting an OpenAPI draft
 - Storing local capture settings
+- Answering requests from an AI client through an optional, authorized local integration
 
 The extension does not use captured data for advertising, analytics, profiling, creditworthiness, or any purpose unrelated to API/network debugging and documentation.
 
@@ -53,9 +54,22 @@ The extension does not operate a backend service for collecting, storing, or ana
 
 ## Data Sharing
 
-API Network Recorder does not sell, rent, transfer, or share captured network data with third parties.
+API Network Recorder does not sell or rent captured network data.
 
-Captured data remains local to the user’s browser unless the user manually exports it and chooses to share it.
+Captured data remains in the browser unless the user exports it or permits an AI
+client to access it. The optional Windows integration grants Codex access to
+captured URLs, headers, and bodies through a local MCP process. The installer
+asks whether the agent may also start and stop recording and deep capture;
+users can choose read-only access. The integration does not send data directly
+to a remote server. The AI client may send requested data to its AI provider
+under that client's settings and privacy policy.
+
+The integration stores its executable, permission settings, a local authentication
+secret, and connection metadata under `%LOCALAPPDATA%/ApiNetworkRecorder`.
+It does not persist captured API records outside the browser. The installer adds
+its MCP entry to Codex's configuration and preserves unrelated settings, with
+a backup of the existing configuration. Communication uses native messaging,
+MCP standard input/output, and authenticated local named pipes.
 
 ## Remote Code
 
@@ -83,9 +97,25 @@ Used to observe network requests and responses so the extension can display requ
 
 Used only in Chrome when the user enables deep capture. Deep capture uses the Chrome Debugger Protocol to access response bodies that are not available through standard network APIs.
 
+### `scripting`
+
+Used in Chrome to register the extension's bundled fetch/XHR hooks at the start of
+page loading while deep capture is enabled. This preserves API responses that
+finish before the debugger connects in new or reloaded tabs. The hooks are
+unregistered when deep capture stops; hooks in already open pages stop recording.
+
 ### Host permissions
 
 Used because developers may need to debug API traffic on different websites, local development environments, staging environments, and production applications.
+
+### `nativeMessaging` (Chrome)
+
+Used to communicate with the optional local AI integration installed by the user.
+The native host accepts only extension IDs authorized during installation.
+
+### `alarms` (Chrome)
+
+Used to reconnect to the installed local integration automatically.
 
 ## User Control
 
@@ -94,6 +124,11 @@ Users can clear captured records from inside the extension.
 Users can also remove all extension data by uninstalling the extension or clearing the extension’s browser storage.
 
 The extension includes controls to pause and continue live updates in the inspector view.
+
+Users can disconnect AI access from the AI access page, or remove the integration
+from Windows Installed Apps. Uninstalling revokes local access and removes its
+Codex entry without deleting captured browser records. The configuration backup
+and executable may remain until existing processes close and users remove them.
 
 ## Children’s Privacy
 

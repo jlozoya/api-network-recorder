@@ -2,6 +2,11 @@ import type { CapturedBody, HeaderMap } from "../core/network-types.js"
 import type { ExtensionMessage } from "../core/message-types.js"
 
 export const EXTENSION_SOURCE = "API_NETWORK_RECORDER"
+let pageCaptureEnabled = true
+export const isPageCaptureEnabled = (): boolean => pageCaptureEnabled
+export const setPageCaptureEnabled = (enabled: boolean): void => {
+  pageCaptureEnabled = enabled
+}
 
 const MAX_BODY_SIZE_BYTES = 2 * 1024 * 1024
 const CAPTURABLE_TEXT_CONTENT_TYPES = [

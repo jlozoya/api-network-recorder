@@ -1,6 +1,6 @@
 {
   "name": "api-network-recorder",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,10 +16,18 @@
     "package:firefox": "bun run build:firefox && cross-env BROWSER_TARGET=firefox bun scripts/package-extension.ts",
     "package:source": "bun scripts/package-source.ts",
     "test": "bun test",
-    "test:browser": "bun run build:chrome && bun scripts/smoke-deep-capture.ts"
+    "test:browser": "bun run build:chrome && bun scripts/smoke-deep-capture.ts",
+    "build:native": "tsc --noEmit -p tsconfig.native.json && bun scripts/build-native.ts",
+    "package:installer": "bun run build:native && bun scripts/package-installer.ts",
+    "test:native": "bun test tests/native-bridge.test.ts",
+    "test:native:binary": "cross-env RECORDER_NATIVE_BINARY=dist/native/api-network-recorder-bridge.exe bun test tests/native-bridge.test.ts",
+    "test:native:browser": "bun scripts/smoke-native-browser.ts",
+    "test:installer": "bun scripts/verify-installer.ts"
   },
   "dependencies": {
-    "idb": "^8.0.0"
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "idb": "^8.0.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",

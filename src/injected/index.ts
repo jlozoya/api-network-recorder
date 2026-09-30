@@ -1,5 +1,16 @@
 import { patchFetch } from "./fetch-patch.js"
 import { patchXhr } from "./xhr-patch.js"
+import { setPageCaptureEnabled } from "./page-utils.js"
+
+window.addEventListener("message", (event: MessageEvent) => {
+  if (
+    event.source === window &&
+    event.data?.source === "API_NETWORK_RECORDER_CONTROL" &&
+    typeof event.data.enabled === "boolean"
+  ) {
+    setPageCaptureEnabled(event.data.enabled)
+  }
+})
 
 const PATCH_FLAG = "__API_NETWORK_RECORDER_PATCHED__"
 

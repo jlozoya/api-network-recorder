@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import assert from "node:assert/strict"
+import { runAgentSmoke } from "./agent-browser-smoke.js"
 
 const fixtureBundlePath = resolve("dist/chrome/assets/inspector-smoke.js")
 const fixtureBundle = await Bun.build({
@@ -34,6 +35,8 @@ const server = Bun.serve({
   fetch(request) {
     if (new URL(request.url).pathname === "/api")
       return Response.json({ capture: "global-smoke", ok: true })
+    if (new URL(request.url).pathname === "/instant-post")
+      return new Response('<!doctype html><title>Immediate POST calls</title><script>fetch("/api?initial-post", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:"first-post"})}); const xhr = new XMLHttpRequest(); xhr.open("POST", "/api?initial-xhr"); xhr.setRequestHeader("Content-Type", "application/json"); xhr.send(JSON.stringify({name:"first-xhr"}));</script>', { headers: { "content-type": "text/html" } })
     return new Response(
       '<!doctype html><title>Recorder smoke test</title><body><script>fetch("/api?" + location.search).then(r => r.json()).then(data => document.body.textContent = JSON.stringify(data))</script>',
       { headers: { "content-type": "text/html" } },
@@ -222,6 +225,57 @@ try {
     "Response bodies in all allowed tabs",
   )
   assert(!records.some((record: any) => record.tabId === ignored))
+  await evaluate('globalThis.__navigationTrace = []; chrome.debugger.onEvent.addListener((source, method, params) => { if (method.startsWith("Network.")) globalThis.__navigationTrace.push({ tabId: source.tabId, method, requestId: params.requestId, url: params.request?.url ?? params.response?.url }); })')
+  const instantTabs = await Promise.all([
+    createTab(fixture + "/?first-load=one"),
+    createTab(fixture + "/?first-load=two"),
+  ])
+  await waitFor(
+    () => message({ type: "GET_RECORDS", payload: { apiOnly: false } }),
+    (captured) => instantTabs.every((tabId) => captured.some((record: any) =>
+      record.tabId === tabId && record.url.includes("first-load=") && record.url.includes("/api?") &&
+      JSON.stringify(record.responseBody).includes("global-smoke"))),
+    "API bodies on the first load of newly opened tabs (without polling capture status)",
+  ).catch(async (error) => {
+    console.log("New-tab capture diagnostics", JSON.stringify({
+      records: (await message({ type: "GET_RECORDS", payload: { apiOnly: false } }) as any[]).filter((record) => instantTabs.includes(record.tabId)).map((record) => ({ source: record.source, url: record.url, body: record.responseBody })),
+      tabs: (await message({ type: "GET_CAPTURE_TABS_STATUS" }) as any[]).filter((tab) => instantTabs.includes(tab.tabId)),
+      events: (await evaluate('globalThis.__navigationTrace')).filter((event: any) => instantTabs.includes(event.tabId)),
+    }))
+    throw error
+  })
+  const beforeReload = new Set((await message({ type: "GET_RECORDS" }) as any[]).map((record) => record.id))
+  await evaluate("chrome.tabs.reload(" + first + ")")
+  await waitFor(
+    () => message({ type: "GET_RECORDS", payload: { source: "debugger", apiOnly: false } }),
+    (captured) => captured.some((record: any) => record.tabId === first && !beforeReload.has(record.id) &&
+      record.url.includes("/api?") && JSON.stringify(record.responseBody).includes("global-smoke")),
+    "API bodies after reloading an attached tab",
+  )
+  console.log("PASS: first-load API bodies in new tabs and response bodies after reload without checking debugger status.")
+  const instantPost = await createTab(fixture + "/instant-post")
+  await waitFor(
+    () => message({ type: "GET_RECORDS", payload: { apiOnly: false } }),
+    (captured) => ["post", "xhr"].every((kind) => captured.some((record: any) =>
+      record.tabId === instantPost && record.url.includes("initial-" + kind) && record.method === "POST" &&
+      record.requestBody?.value?.name === "first-" + kind && JSON.stringify(record.responseBody).includes("global-smoke"))),
+    "Immediate fetch and XHR POST calls preserve request and response bodies",
+  )
+  const beforeRecovery = new Set((await message({ type: "GET_RECORDS" }) as any[]).map((record) => record.id))
+  await evaluate("chrome.debugger.sendCommand({ tabId: " + first + " }, 'Network.disable')")
+  await evaluate("chrome.tabs.reload(" + first + ")")
+  await waitFor(
+    () => message({ type: "GET_RECORDS", payload: { apiOnly: false } }),
+    (captured) => captured.some((record: any) => record.tabId === first && !beforeRecovery.has(record.id) &&
+      record.url.includes("/api?") && JSON.stringify(record.responseBody).includes("global-smoke")),
+    "Reload preserves response bodies while restoring the Network domain",
+  )
+  await evaluate("chrome.scripting.executeScript({ target: { tabId: " + first + " }, world: 'MAIN', func: () => new Promise(resolve => setTimeout(() => fetch('/api?after-recovery').then(r => r.json()).then(resolve), 200)) })")
+  await waitFor(
+    () => message({ type: "GET_RECORDS", payload: { source: "debugger", apiOnly: false } }),
+    (captured) => captured.some((record: any) => record.tabId === first && record.url.includes("after-recovery") && JSON.stringify(record.responseBody).includes("global-smoke")),
+    "Reload re-enables debugger capture for subsequent API requests without a popup/status repair",
+  )
   const settings = await message({ type: "GET_CAPTURE_SETTINGS" })
   assert.deepEqual(settings.ignoredTabIds, [ignored])
   assert.deepEqual(settings.ignoredDomains, ["localhost"])
@@ -231,6 +285,11 @@ try {
     (value) => !value.enabled && value.attachedCount === 0,
     "Global stop",
   )
+  assert.deepEqual(await evaluate('chrome.scripting.getRegisteredContentScripts({ ids: ["deep-capture-first-requests"] })'), [])
+  const stoppedPage = await evaluate("chrome.scripting.executeScript({ target: { tabId: " + instantPost + " }, world: 'MAIN', func: async () => { const events = []; const handler = event => { if (event.data?.source === 'API_NETWORK_RECORDER' && event.data.message?.payload.url.includes('after-stop')) events.push(event.data); }; window.addEventListener('message', handler); const response = await fetch('/api?after-stop'); const body = await response.json(); await new Promise(resolve => setTimeout(resolve, 100)); window.removeEventListener('message', handler); return { events, body }; } })")
+  assert.equal(stoppedPage[0].result.body.capture, "global-smoke")
+  assert.deepEqual(stoppedPage[0].result.events, [])
+  console.log("PASS: immediate fetch/XHR POST bodies; recovery of disabled Network after reload; stop unregisters future hooks and disables existing page hooks.")
   console.log(
     "PASS: popup starts globally from an ignored tab; 3 allowed tabs capture real JSON; exclusions preserved; global stop works.",
   )
@@ -583,6 +642,20 @@ try {
   console.log(
     "PASS: v1 migration; metadata lists; pinned retention; atomic snapshots; body search; lazy inspector details; comparison; session reopen; per-origin export; tab diagnostics; stable list and detail nodes; native smooth scrolling; animated new records; selection retention.",
   )
+  await evaluate('document.querySelector("#openAgent").click()')
+  const agentTarget = await waitFor(
+    async () => (await (await fetch(base + "/json/list")).json()).find((target: any) => target.url === extensionUrl + "/agent.html"),
+    Boolean,
+    "AI access opened from inspector",
+  )
+  command = await connect(agentTarget.webSocketDebuggerUrl)
+  await waitFor(() => evaluate('Boolean(document.getElementById("searchForm"))'), Boolean, "AI access page")
+  await runAgentSmoke(evaluate, waitFor)
+  await command("Emulation.setDeviceMetricsOverride", { width: 1100, height: 1000, deviceScaleFactor: 1, mobile: false })
+  await writeFile(resolve("dist/agent-smoke.png"), Buffer.from((await command("Page.captureScreenshot", { format: "png" })).data, "base64"))
+  await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
+  assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'), "AI access overflows on mobile")
+  await writeFile(resolve("dist/agent-mobile-smoke.png"), Buffer.from((await command("Page.captureScreenshot", { format: "png" })).data, "base64"))
 } finally {
   if (browserCommand) await browserCommand("Browser.close").catch(() => {})
   await unlink(fixtureBundlePath).catch(() => {})
