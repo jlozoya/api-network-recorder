@@ -9,24 +9,10 @@ const bundled = Bun.build({
   define: { __SUPPORTS_DEEP_CAPTURE__: "true" },
   plugins: [
     {
-      name: "agent-ui-storage",
+      name: "agent-ui-styles",
       setup(build) {
-        build.onResolve({ filter: /network-record-repository\.js$/ }, () => ({
-          path: "records",
-          namespace: "test",
-        }))
         build.onResolve({ filter: /\.css$/ }, () => ({ path: "styles", namespace: "test" }))
-        build.onLoad({ filter: /.*/, namespace: "test" }, ({ path }) => ({
-          loader: "js",
-          contents:
-            path === "styles"
-              ? ""
-              : `
-          export const listNetworkRecordPreviews = (...args) => globalThis.listRecords(...args);
-          export const getNetworkRecordsByIds = (...args) => globalThis.getRecords(...args);
-          export const listSavedSessions = async () => [];
-        `,
-        }))
+        build.onLoad({ filter: /.*/, namespace: "test" }, () => ({ loader: "js", contents: "" }))
       },
     },
   ],
@@ -40,36 +26,25 @@ const deferred = () => {
   return { promise, resolve: (value: any) => resolve(value) }
 }
 class Element {
-  value = ""
   textContent = ""
   hidden = false
   disabled = false
-  checked = true
-  dataset = {}
-  children: Element[] = []
+  dataset: Record<string, string> = {}
   handlers = new Map<string, (event: any) => void>()
   addEventListener(name: string, callback: (event: any) => void) {
     this.handlers.set(name, callback)
   }
-  append(child: Element) {
-    this.children.push(child)
-  }
-  replaceChildren() {
-    this.children = []
-  }
 }
 const createUi = async (
-  listRecords = async (..._args: any[]) => [] as any[],
-  getRecords = async (..._args: any[]) => [] as any[],
+  options: {
+    sendMessage?: (message: any) => Promise<any>
+  } = {},
 ) => {
   const elements = new Map<string, Element>()
   const element = (id: string) => {
     if (!elements.has(id)) elements.set(id, new Element())
     return elements.get(id)!
   }
-  element("pageSize").value = "10"
-  element("method").value = "ALL"
-  element("statusGroup").value = "all"
   const timers = new Map<number, () => void>()
   let timerId = 0
   const settings = {
@@ -82,10 +57,8 @@ const createUi = async (
   }
   const context = createContext({
     console,
-    listRecords,
-    getRecords,
     URL,
-    document: { getElementById: element, createElement: () => new Element() },
+    document: { getElementById: element },
     setTimeout: (callback: () => void) => {
       const id = ++timerId
       timers.set(id, callback)
@@ -96,8 +69,15 @@ const createUi = async (
     },
     chrome: {
       runtime: {
-        getURL: (path: string) => "chrome-extension://test/" + path,
-        sendMessage: async () => ({ ok: true, data: [] }),
+        sendMessage:
+          options.sendMessage ??
+          (async (message: any) => ({
+            ok: true,
+            data:
+              message.type === "GET_NATIVE_BRIDGE_STATUS"
+                ? { connected: false, status: "Disabled" }
+                : [],
+          })),
       },
       storage: {
         local: {
@@ -119,60 +99,11 @@ const createUi = async (
   const json = (id: string) => JSON.parse(element(id).textContent)
   return { element, trigger, json, settings, timers }
 }
-const preview = (id: string) => ({ id, method: "GET", url: "https://api.test/" + id, status: 200 })
-
-test("AI access keeps the latest search when an older search finishes last", async () => {
-  const old = deferred()
-  const ui = await createUi(async (filters) =>
-    filters.search === "old" ? old.promise : [preview(filters.search || "initial")],
-  )
-  ui.element("search").value = "old"
-  ui.trigger("searchForm", "submit")
-  ui.element("search").value = "new"
-  ui.trigger("searchForm", "submit")
-  await flush()
-  expect(ui.json("requestsJson").records[0].id).toBe("new")
-  old.resolve([preview("stale")])
-  await flush()
-  expect(ui.json("requestsJson").records[0].id).toBe("new")
-  expect(ui.timers.size).toBe(0)
-})
-
-test("AI access invalidates a pending detail read when the session changes", async () => {
-  const pending = deferred()
-  const requested: any[] = []
-  const ui = await createUi(
-    async () => [preview("one")],
-    async (ids, session) => {
-      requested.push({ ids, session })
-      return session
-        ? [{ id: "one", responseBody: { kind: "text", value: "saved" } }]
-        : pending.promise
-    },
-  )
-  ui.element("requestId").value = "one"
-  ui.trigger("requestForm", "submit")
-  ui.element("session").value = "saved-session"
-  ui.trigger("session", "change")
-  await flush()
-  expect(ui.json("requestJson")).toBeNull()
-  ui.element("requestId").value = "one"
-  ui.trigger("requestForm", "submit")
-  await flush()
-  expect(ui.json("requestJson").data.responseBody.value).toBe("saved")
-  pending.resolve([{ id: "one", responseBody: { kind: "text", value: "stale live" } }])
-  await flush()
-  expect(ui.json("requestJson").sessionId).toBe("saved-session")
-  expect(ui.json("requestJson").data.responseBody.value).toBe("saved")
-  expect(requested).toEqual([
-    { ids: ["one"], session: undefined },
-    { ids: ["one"], session: "saved-session" },
-  ])
-  expect(ui.timers.size).toBe(0)
-})
-
 test("AI recording controls preserve exclusions and do not reset an active recording", async () => {
   const ui = await createUi()
+  expect(ui.element("recordingBadge").textContent).toBe("Recording")
+  expect(ui.element("startRecording").hidden).toBe(true)
+  expect(ui.element("stopRecording").hidden).toBe(false)
   ui.trigger("startRecording")
   expect(ui.json("captureStatus")).toBeNull()
   expect(ui.element("startRecording").disabled).toBe(true)
@@ -182,6 +113,9 @@ test("AI recording controls preserve exclusions and do not reset an active recor
   ui.trigger("stopRecording")
   await flush()
   expect(ui.settings.capturePaused).toBe(true)
+  expect(ui.element("recordingBadge").textContent).toBe("Paused")
+  expect(ui.element("startRecording").hidden).toBe(false)
+  expect(ui.element("stopRecording").hidden).toBe(true)
   ui.trigger("startRecording")
   await flush()
   expect(ui.settings.capturePaused).toBe(false)
@@ -193,4 +127,33 @@ test("AI recording controls preserve exclusions and do not reset an active recor
   expect(ui.settings.ignoredDomains).toEqual(["excluded.test"])
   expect(ui.settings.ignoredTabIds).toEqual([42])
   expect(ui.settings.captureLimit).toBe(50)
+})
+
+test("AI connection controls serialize actions and recover after a status error", async () => {
+  const pending = deferred()
+  const calls: any[] = []
+  const ui = await createUi({
+    sendMessage: async (message) => {
+      if (message.type === "GET_CAPTURE_TABS_STATUS") return { ok: true, data: [] }
+      calls.push(message)
+      if (message.type === "GET_NATIVE_BRIDGE_STATUS")
+        return { ok: true, data: { connected: true, status: "Connected" } }
+      return pending.promise
+    },
+  })
+  expect(ui.element("integrationBadge").textContent).toBe("Connected")
+  expect(ui.element("connectIntegration").hidden).toBe(true)
+  expect(ui.element("disconnectIntegration").hidden).toBe(false)
+  ui.trigger("disconnectIntegration")
+  ui.trigger("connectIntegration")
+  expect(calls.length).toBe(2)
+  expect(calls[1].payload.enabled).toBe(false)
+  expect(ui.element("refreshIntegration").disabled).toBe(true)
+  pending.resolve({ ok: false, error: "Connection unavailable" })
+  await flush()
+  expect(ui.element("integrationBadge").dataset.state).toBe("error")
+  expect(ui.element("refreshIntegration").disabled).toBe(false)
+  ui.trigger("refreshIntegration")
+  await flush()
+  expect(ui.element("integrationBadge").textContent).toBe("Connected")
 })

@@ -657,7 +657,7 @@ try {
     "AI access opened from inspector",
   )
   command = await connect(agentTarget.webSocketDebuggerUrl)
-  await waitFor(() => evaluate('Boolean(document.getElementById("searchForm"))'), Boolean, "AI access page")
+  await waitFor(() => evaluate('Boolean(document.getElementById("localIntegration"))'), Boolean, "AI access page")
   await runAgentSmoke(evaluate, waitFor)
   await command("Emulation.setDeviceMetricsOverride", { width: 1100, height: 1000, deviceScaleFactor: 1, mobile: false })
   await writeFile(resolve("dist/agent-smoke.png"), Buffer.from((await command("Page.captureScreenshot", { format: "png" })).data, "base64"))

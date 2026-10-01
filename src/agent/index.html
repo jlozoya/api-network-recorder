@@ -7,139 +7,94 @@
   </head>
   <body>
     <main>
-      <header>
+      <header class="page-header">
         <div>
+          <p class="eyebrow">API Network Recorder</p>
           <h1>AI access</h1>
-          <p>API Network Recorder</p>
+          <p>Connect your agent to captured API calls.</p>
         </div>
-        <a href="app.html">Open inspector</a>
+        <a class="button" href="app.html">Open inspector <span aria-hidden="true">↗</span></a>
       </header>
 
-      <section id="localIntegration" aria-labelledby="integrationHeading">
-        <h2 id="integrationHeading">Connect to Codex</h2>
-        <p>Install the local integration once. Codex connects automatically while Chrome is open.</p>
-        <div class="actions">
-          <a href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe" target="_blank" rel="noopener">Install AI integration for Windows</a>
-          <button id="connectIntegration" type="button">Connect integration</button>
-          <button id="disconnectIntegration" type="button">Disconnect integration</button>
-          <button id="refreshIntegration" type="button">Refresh connection</button>
-        </div>
-        <p id="integrationNotice" role="status">Checking connection…</p>
-      </section>
-
-      <section aria-labelledby="instructionsHeading">
-        <h2 id="instructionsHeading">Connect through your browser</h2>
-        <p>
-          Open this address with your agent's browser tool using the profile where the extension is
-          installed.
-        </p>
-        <label for="agentUrl">Page address</label>
-        <input id="agentUrl" type="text" readonly />
-        <p>
-          Use Search requests to find captured calls, then select a request to view its headers and
-          bodies in Request JSON. Search again to refresh the results.
-        </p>
-      </section>
-
-      <section aria-labelledby="captureHeading">
-        <h2 id="captureHeading">Capture controls</h2>
-        <p>Controls affect live capture across tabs. Existing exclusions are respected.</p>
-        <div class="actions">
-          <button id="startRecording" type="button">Start recording</button>
-          <button id="stopRecording" type="button">Stop recording</button>
-          <button id="refreshStatus" type="button">Refresh capture status</button>
-        </div>
-        <div id="deepControls" hidden>
-          <p>Enable deep capture to include response bodies.</p>
+      <div class="overview">
+        <section id="localIntegration" aria-labelledby="integrationHeading">
+          <div class="section-heading">
+            <h2 id="integrationHeading">Connect to Codex</h2>
+            <span id="integrationBadge" class="badge" data-state="pending">Checking…</span>
+          </div>
+          <p>
+            The extension saves captured API calls in Chrome. The Windows integration lets Codex
+            search them and read available headers and bodies when you ask.
+          </p>
+          <p>Try asking Codex: “Find failed API calls and explain what went wrong.”</p>
+          <ol class="setup-steps">
+            <li>
+              <span class="step-number" aria-hidden="true">1</span>
+              <div>
+                <strong>Install once</strong>
+                <p>Run the installer, then restart Codex.</p>
+                <a
+                  class="button primary"
+                  href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe"
+                  target="_blank"
+                  rel="noopener"
+                  >Install for Windows <span aria-hidden="true">↗</span></a
+                >
+              </div>
+            </li>
+            <li>
+              <span class="step-number" aria-hidden="true">2</span>
+              <div>
+                <strong>Keep Chrome open</strong>
+                <p>Codex connects automatically. This page can be closed.</p>
+              </div>
+            </li>
+          </ol>
+          <p id="integrationNotice" class="notice" role="status">Checking connection…</p>
           <div class="actions">
-            <button id="startDeepCapture" type="button">Start deep capture</button>
-            <button id="stopDeepCapture" type="button">Stop deep capture</button>
+            <button id="connectIntegration" type="button">Connect integration</button>
+            <button id="disconnectIntegration" class="quiet" type="button" hidden>
+              Disconnect integration
+            </button>
+            <button id="refreshIntegration" class="quiet" type="button">Refresh connection</button>
           </div>
-        </div>
-        <p id="captureNotice" role="status">Loading capture status…</p>
-        <details>
-          <summary>Capture status JSON</summary>
-          <pre id="captureStatus" aria-label="Capture status JSON">null</pre>
-        </details>
-      </section>
+        </section>
 
-      <section aria-labelledby="searchHeading">
-        <h2 id="searchHeading">Search captured requests</h2>
-        <form id="searchForm">
-          <div class="filters">
-            <label
-              >Session
-              <select id="session">
-                <option value="">Live capture</option>
-              </select></label
-            >
-            <label
-              >Search URL or body <input id="search" type="search" placeholder="/api/patients"
-            /></label>
-            <label
-              >Method
-              <select id="method">
-                <option value="ALL">All methods</option>
-                <option>GET</option>
-                <option>POST</option>
-                <option>PUT</option>
-                <option>PATCH</option>
-                <option>DELETE</option>
-                <option>HEAD</option>
-                <option>OPTIONS</option>
-              </select></label
-            >
-            <label
-              >Status
-              <select id="statusGroup">
-                <option value="all">All statuses</option>
-                <option value="success">2xx success</option>
-                <option value="redirect">3xx redirect</option>
-                <option value="client-error">4xx client error</option>
-                <option value="server-error">5xx server error</option>
-                <option value="error">Network error / no status</option>
-              </select></label
-            >
-            <label>Host <input id="host" type="text" placeholder="api.example.com" /></label>
-            <label
-              >Requests per page
-              <select id="pageSize">
-                <option>10</option>
-                <option selected>25</option>
-                <option>50</option>
-                <option>100</option>
-              </select></label
-            >
+        <section class="capture-panel" aria-labelledby="captureHeading">
+          <div class="section-heading">
+            <h2 id="captureHeading">Live capture</h2>
+            <button id="refreshStatus" class="quiet" type="button">Refresh status</button>
           </div>
-          <div class="actions">
-            <label class="checkbox"
-              ><input id="apiOnly" type="checkbox" checked /> API requests only</label
-            >
-            <button id="searchRequests" type="submit">Search requests</button>
+          <p>Capture across tabs using your existing exclusions.</p>
+          <div class="capture-row">
+            <div>
+              <strong>Recording</strong>
+              <p>Store new network requests.</p>
+              <span id="recordingBadge" class="badge" data-state="pending">Checking…</span>
+            </div>
+            <div class="actions">
+              <button id="startRecording" type="button">Start recording</button>
+              <button id="stopRecording" type="button">Stop recording</button>
+            </div>
           </div>
-        </form>
-        <p id="sessionNotice" role="status" hidden></p>
-        <p id="listNotice" role="status">Loading requests…</p>
-        <div class="actions">
-          <button id="previousPage" type="button" disabled>Previous page</button>
-          <button id="nextPage" type="button" disabled>Next page</button>
-        </div>
-        <ul id="requestList" aria-label="Captured requests"></ul>
-        <details open>
-          <summary>Requests JSON</summary>
-          <pre id="requestsJson" aria-label="Requests JSON">null</pre>
-        </details>
-      </section>
-
-      <section aria-labelledby="requestHeading">
-        <h2 id="requestHeading">Request details</h2>
-        <form id="requestForm" class="actions">
-          <label>Request ID <input id="requestId" type="text" required /></label>
-          <button id="getRequest" type="submit">Get request</button>
-        </form>
-        <p id="detailNotice" role="status">Select a request or enter its ID.</p>
-        <pre id="requestJson" aria-label="Request JSON">null</pre>
-      </section>
+          <div id="deepControls" class="capture-row" hidden>
+            <div>
+              <strong>Response bodies</strong>
+              <p>Deep capture includes response content.</p>
+              <span id="deepBadge" class="badge" data-state="pending">Checking…</span>
+            </div>
+            <div class="actions">
+              <button id="startDeepCapture" type="button">Start deep capture</button>
+              <button id="stopDeepCapture" type="button">Stop deep capture</button>
+            </div>
+          </div>
+          <p id="captureNotice" class="notice" role="status">Loading capture status…</p>
+          <details class="json-disclosure">
+            <summary>Capture status JSON</summary>
+            <pre id="captureStatus" aria-label="Capture status JSON">null</pre>
+          </details>
+        </section>
+      </div>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>
