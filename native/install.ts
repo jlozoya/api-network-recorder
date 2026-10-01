@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path"
 import { randomBytes } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { appDirectory, extensionIdSchema, HOST_NAME, MCP_NAME, configSchema } from "./config.js"
+import { installAgentSkill, removeAgentSkill } from "./skill.js"
 
 export const detectExtensionIds = (userData: string): string[] => {
   if (!existsSync(userData)) return []
@@ -138,6 +139,7 @@ export const configureIntegration = (
   const temporaryConfig = configPath + ".api-recorder-tmp"
   writeFileSync(temporaryConfig, updated, { mode: 0o600 })
   renameSync(temporaryConfig, configPath)
+  installAgentSkill(codexDir)
 }
 
 export const removeCodexConfig = (original: string): string => {
@@ -148,7 +150,8 @@ export const removeCodexConfig = (original: string): string => {
   return original.slice(0, start) + original.slice(end + END.length).replace(/^\r?\n/, "")
 }
 export const uninstallIntegration = (): void => {
-  const configPath = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "config.toml")
+  const codexDir = process.env.CODEX_HOME || join(homedir(), ".codex")
+  const configPath = join(codexDir, "config.toml")
   if (existsSync(configPath))
     writeFileSync(configPath, removeCodexConfig(readFileSync(configPath, "utf8")), { mode: 0o600 })
   spawnSync(
@@ -159,6 +162,7 @@ export const uninstallIntegration = (): void => {
   try {
     unlinkSync(join(appDirectory(), "bridge.json"))
   } catch {}
+  removeAgentSkill(codexDir)
   spawnSync(
     "reg.exe",
     [
@@ -200,7 +204,7 @@ export const installInteractive = (): void => {
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ApiNetworkRecorderBridge"
     for (const [name, value] of Object.entries({
       DisplayName: "API Network Recorder AI Integration",
-      DisplayVersion: "0.4.2",
+      DisplayVersion: "0.4.3",
       Publisher: "API Network Recorder",
       UninstallString: `"${executable}" --uninstall-ui`,
     })) {

@@ -1,5 +1,8 @@
 import { startMcp } from "./mcp.js"
 import { startNativeHost } from "./host.js"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { installAgentSkill } from "./skill.js"
 import {
   configureIntegration,
   installInteractive,
@@ -12,6 +15,8 @@ try {
   if (args[0] === "--install") installInteractive()
   else if (args[0] === "--uninstall-ui") uninstallInteractive()
   else if (args[0] === "--mcp") await startMcp()
+  else if (args[0] === "--install-skill")
+    installAgentSkill(process.env.CODEX_HOME || join(homedir(), ".codex"))
   else if (args[0] === "--configure") {
     configureIntegration(
       args.find((arg) => arg.startsWith("--extension-id="))?.slice(15) || undefined,

@@ -42,6 +42,7 @@ const includedRootDirectories = new Set([
   "native",
   "installer",
   "tests",
+  "skills",
   ".github",
 ])
 

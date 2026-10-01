@@ -99,6 +99,12 @@ test("installer writes an isolated installation, preserves Codex settings and up
     expect(first.token).toMatch(/^[a-f0-9]{64}$/)
     expect(readFileSync(configPath + ".api-recorder-backup", "utf8")).toBe(original)
     expect(readFileSync(configPath, "utf8")).toContain(original)
+    expect(
+      readFileSync(
+        join(process.env.CODEX_HOME, "skills", "api-network-recorder", "SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("name: api-network-recorder")
     expect(JSON.parse(readFileSync(manifests[0], "utf8")).allowed_origins).toEqual([
       `chrome-extension://${extensionId}/`,
     ])
@@ -219,6 +225,51 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       Array.from({ length: 8 }, (_, i) => String(i)),
     )
     expect(body(responses[0]).responseBody.value.synthetic).toBe("México 🧪")
+    if (bridgeBinary) {
+      const invokeSkill = (tool: string, args: object) =>
+        new Promise<{ code: number | null; result: any }>((resolveResult, reject) => {
+          const child = spawn(
+            "pwsh.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-File",
+              resolve("skills/api-network-recorder/scripts/invoke-recorder.ps1"),
+              "-BridgePath",
+              resolve(bridgeBinary),
+              "-Tool",
+              tool,
+              "-ArgumentsJson",
+              JSON.stringify(args),
+            ],
+            { env: runtimeEnv(home), windowsHide: true },
+          )
+          let output = "",
+            error = ""
+          child.stdout!.on("data", (bytes) => {
+            output += String(bytes)
+          })
+          child.stderr!.on("data", (bytes) => {
+            error += String(bytes)
+          })
+          child.on("error", reject)
+          child.on("exit", (code) => {
+            try {
+              expect(error).toBe("")
+              resolveResult({ code, result: JSON.parse(output) })
+            } catch (failure) {
+              reject(failure)
+            }
+          })
+        })
+      const read = await invokeSkill("get_request", { id: "skill-México-🧪" })
+      expect(read.code).toBe(0)
+      expect(read.result.id).toBe("skill-México-🧪")
+      expect(read.result.responseBody.value.synthetic).toBe("México 🧪")
+      const denied = await invokeSkill("start_recording", {})
+      expect(denied.code).toBe(1)
+      expect(denied.result.error).toContain("permission")
+    }
     const count = forwarded
     const denied = await client.callTool({ name: "start_recording", arguments: {} })
     expect(denied.isError).toBe(true)

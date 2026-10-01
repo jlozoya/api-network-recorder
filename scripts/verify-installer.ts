@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import assert from "node:assert/strict"
+import { skillAssets } from "../native/skill.js"
 
 const directory = mkdtempSync(join(tmpdir(), "recorder-installer-check-"))
 try {
@@ -43,8 +44,25 @@ try {
     readFileSync("release/api-network-recorder-windows-x64-setup.exe.sha256", "utf8").split(" ")[0],
     hash(installer),
   )
+  const codexDirectory = join(directory, "codex")
+  const installedSkill = spawnSync(
+    join(directory, "api-network-recorder-bridge.exe"),
+    ["--install-skill"],
+    {
+      windowsHide: true,
+      env: { ...process.env, CODEX_HOME: codexDirectory },
+      encoding: "utf8",
+    },
+  )
+  assert.equal(installedSkill.status, 0, installedSkill.stderr)
+  for (const [relative, content] of Object.entries(skillAssets)) {
+    assert.equal(
+      readFileSync(join(codexDirectory, "skills", "api-network-recorder", relative), "utf8"),
+      content,
+    )
+  }
   console.log(
-    "PASS: installer contains the tested executable and license notices; checksum matches",
+    "PASS: installer contains the tested executable, license notices and self-contained skill/client; checksum matches",
   )
 } finally {
   assert(resolve(directory).startsWith(resolve(tmpdir()) + "\\recorder-installer-check-"))

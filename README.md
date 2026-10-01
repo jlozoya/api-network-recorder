@@ -81,6 +81,14 @@ IDs, registers a per-user native host, and adds `api-network-recorder` to Codex'
 configuration. It requires no administrator, Node.js, or Python installation.
 The unsigned installer may show Windows reputation prompts.
 
+The installer also installs the `api-network-recorder` skill into Codex's user
+skills directory. Invoke it with `$api-network-recorder`, or ask naturally to
+inspect captured API calls. It explains profile/session selection, searching,
+reading bodies and capture permissions. Its PowerShell MCP client can use the
+installed integration even when MCP tools have not yet appeared in a chat.
+The skill and client require no separate install. Updates and removal preserve
+customized skill instructions and other user files.
+
 Available tools: `list_profiles`, `capture_status`, `search_requests`, `get_request`,
 `list_sessions`, `start_recording`, `stop_recording`, `start_deep_capture`, and
 `stop_deep_capture`. Capture controls require the installation permission.

@@ -1,0 +1,11 @@
+interface:
+  display_name: "API Network Recorder"
+  short_description: "Consulta las llamadas API capturadas en Chrome"
+  default_prompt: "Usa $api-network-recorder para revisar las llamadas API capturadas y diagnosticar el problema."
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "api-network-recorder"
+      description: "Integración local de API Network Recorder"
