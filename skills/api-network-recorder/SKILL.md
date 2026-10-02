@@ -9,7 +9,7 @@ Usa la integración local `api-network-recorder` para consultar las llamadas que
 capturó la extensión de Chrome. Selecciona sus herramientas MCP disponibles;
 el cliente puede añadir un prefijo al nombre de cada herramienta.
 
-Si no aparecen en el chat, usa `scripts/invoke-recorder.ps1`, incluido junto a
+Si no aparecen en el chat, en Windows usa `scripts/invoke-recorder.ps1`, incluido junto a
 esta skill. El script habla con el MCP instalado mediante entrada/salida estándar
 y devuelve el mismo resultado, sin instalar dependencias. Desde PowerShell:
 
@@ -21,6 +21,20 @@ y devuelve el mismo resultado, sin instalar dependencias. Desde PowerShell:
 Sustituye la ruta por la carpeta real de esta skill. El ejecutable se encuentra
 normalmente en `%LOCALAPPDATA%/ApiNetworkRecorder/api-network-recorder-bridge.exe`;
 el script también admite `-BridgePath` para una instalación en otra ubicación.
+
+En macOS/Linux usa el cliente incluido `scripts/invoke-recorder.sh`, que ejecuta
+las mismas herramientas de la integración local con los mismos permisos:
+
+```bash
+sh "<carpeta-de-esta-skill>/scripts/invoke-recorder.sh" list_profiles
+sh "<carpeta-de-esta-skill>/scripts/invoke-recorder.sh" search_requests '{"search":"/api/patients","statusGroup":"server-error","pageSize":25}'
+```
+
+El ejecutable está normalmente en
+`~/Library/Application Support/ApiNetworkRecorder/api-network-recorder-bridge`
+en macOS, y en `~/.local/share/api-network-recorder/api-network-recorder-bridge`
+en Linux (o bajo `XDG_DATA_HOME` si es una ruta absoluta). El cliente acepta
+`API_RECORDER_BRIDGE` para indicar otro ejecutable; no necesita Bun, Node ni Python.
 
 ## Consultar llamadas
 

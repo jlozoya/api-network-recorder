@@ -23,7 +23,7 @@
             <span id="integrationBadge" class="badge" data-state="pending">Checking…</span>
           </div>
           <p>
-            The extension saves captured API calls in Chrome. The Windows integration lets Codex
+            The extension saves captured API calls in Chrome. The local integration lets Codex
             search them and read available headers and bodies when you ask.
           </p>
           <p>Try asking Codex: “Find failed API calls and explain what went wrong.”</p>
@@ -32,7 +32,7 @@
               <span class="step-number" aria-hidden="true">1</span>
               <div>
                 <strong>Install once</strong>
-                <p>Run the installer, then restart Codex.</p>
+                <p>Choose your system, install the integration, then restart Codex.</p>
                 <a
                   class="button primary"
                   href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe"
@@ -40,6 +40,44 @@
                   rel="noopener"
                   >Install for Windows <span aria-hidden="true">↗</span></a
                 >
+                <details>
+                  <summary>Install for macOS or Linux</summary>
+                  <p>
+                    Download the package for your processor, extract it, and run
+                    <code>sh install.sh</code> in its folder. Choose read-only access or capture
+                    controls when prompted.
+                  </p>
+                  <div class="actions">
+                    <a
+                      class="button"
+                      href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-arm64.tar.gz"
+                      target="_blank"
+                      rel="noopener"
+                      >macOS Apple Silicon ↗</a
+                    >
+                    <a
+                      class="button"
+                      href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-x64.tar.gz"
+                      target="_blank"
+                      rel="noopener"
+                      >macOS Intel ↗</a
+                    >
+                    <a
+                      class="button"
+                      href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-x64.tar.gz"
+                      target="_blank"
+                      rel="noopener"
+                      >Linux x64 ↗</a
+                    >
+                    <a
+                      class="button"
+                      href="https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-arm64.tar.gz"
+                      target="_blank"
+                      rel="noopener"
+                      >Linux ARM64 ↗</a
+                    >
+                  </div>
+                </details>
               </div>
             </li>
             <li>

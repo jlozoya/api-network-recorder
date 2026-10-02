@@ -1,5 +1,6 @@
 import {
   copyFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -8,12 +9,13 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { randomBytes } from "node:crypto"
 import { spawnSync } from "node:child_process"
+import { createInterface } from "node:readline/promises"
 import { appDirectory, extensionIdSchema, HOST_NAME, MCP_NAME, configSchema } from "./config.js"
 import { installAgentSkill, removeAgentSkill } from "./skill.js"
+import { integrationPaths, platformContext } from "./platform.js"
 
 export const detectExtensionIds = (userData: string): string[] => {
   if (!existsSync(userData)) return []
@@ -69,7 +71,18 @@ export const updateCodexConfig = (original: string, executable: string): string 
   return original + (original.endsWith("\n") || !original ? "" : "\n") + "\n" + block + "\n"
 }
 
-const registerChromeHost = (manifest: string): void => {
+export const registerChromeHost = (manifest: string, context = platformContext()): void => {
+  if (context.platform !== "win32") {
+    const destination = join(
+      integrationPaths(context).chrome,
+      "NativeMessagingHosts",
+      `${HOST_NAME}.json`,
+    )
+    mkdirSync(dirname(destination), { recursive: true })
+    copyFileSync(manifest, destination)
+    chmodSync(destination, 0o600)
+    return
+  }
   const registry = spawnSync(
     "reg.exe",
     [
@@ -89,22 +102,19 @@ const registerChromeHost = (manifest: string): void => {
 export const configureIntegration = (
   extensionId: string | undefined,
   allowControls: boolean,
-  registerHost = registerChromeHost,
+  registerHost?: (manifest: string) => void,
+  context = platformContext(),
 ): void => {
-  const directory = appDirectory()
-  const localAppData = process.env.LOCALAPPDATA
-  if (!localAppData) throw new Error("LOCALAPPDATA is missing")
+  const { directory, executable, codex: codexDir, chrome } = integrationPaths(context)
   const extensionIds = extensionId
     ? [extensionIdSchema.parse(extensionId)]
-    : detectExtensionIds(join(localAppData, "Google", "Chrome", "User Data"))
+    : detectExtensionIds(chrome)
   if (!extensionIds.length)
     throw new Error(
       "Install API Network Recorder in Chrome first, or enter its extension ID in the installer.",
     )
-  mkdirSync(directory, { recursive: true })
-  const executable = join(directory, "api-network-recorder-bridge.exe")
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
   if (!existsSync(executable)) throw new Error("Bridge executable was not installed")
-  const codexDir = resolve(process.env.CODEX_HOME || join(homedir(), ".codex"))
   const configPath = join(codexDir, "config.toml")
   const original = existsSync(configPath) ? readFileSync(configPath, "utf8") : ""
   const updated = updateCodexConfig(original, executable)
@@ -132,7 +142,14 @@ export const configureIntegration = (
       2,
     ),
   )
-  registerHost(join(directory, "native-host.json"))
+  if (context.platform !== "win32") {
+    chmodSync(directory, 0o700)
+    chmodSync(join(directory, "bridge.json"), 0o600)
+    chmodSync(executable, 0o700)
+  }
+  const manifest = join(directory, "native-host.json")
+  if (registerHost) registerHost(manifest)
+  else registerChromeHost(manifest, context)
   mkdirSync(codexDir, { recursive: true })
   if (original && !existsSync(configPath + ".api-recorder-backup"))
     writeFileSync(configPath + ".api-recorder-backup", original, { mode: 0o600 })
@@ -149,29 +166,85 @@ export const removeCodexConfig = (original: string): string => {
   if (end < 0) throw new Error("Integration configuration is incomplete")
   return original.slice(0, start) + original.slice(end + END.length).replace(/^\r?\n/, "")
 }
-export const uninstallIntegration = (): void => {
-  const codexDir = process.env.CODEX_HOME || join(homedir(), ".codex")
+export const uninstallIntegration = (context = platformContext()): void => {
+  const { directory, executable, chrome, codex: codexDir } = integrationPaths(context)
   const configPath = join(codexDir, "config.toml")
   if (existsSync(configPath))
     writeFileSync(configPath, removeCodexConfig(readFileSync(configPath, "utf8")), { mode: 0o600 })
-  spawnSync(
-    "reg.exe",
-    ["DELETE", `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, "/f"],
-    { windowsHide: true },
-  )
+  if (context.platform === "win32")
+    spawnSync(
+      "reg.exe",
+      ["DELETE", `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, "/f"],
+      { windowsHide: true },
+    )
+  else {
+    const manifest = join(chrome, "NativeMessagingHosts", `${HOST_NAME}.json`)
+    if (existsSync(manifest)) {
+      const data = JSON.parse(readFileSync(manifest, "utf8"))
+      // A different installation may have taken over registration.
+      if (data.path === executable && data.name === HOST_NAME) unlinkSync(manifest)
+    }
+  }
   try {
-    unlinkSync(join(appDirectory(), "bridge.json"))
+    unlinkSync(join(directory, "bridge.json"))
   } catch {}
   removeAgentSkill(codexDir)
-  spawnSync(
-    "reg.exe",
-    [
-      "DELETE",
-      "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ApiNetworkRecorderBridge",
-      "/f",
-    ],
-    { windowsHide: true },
-  )
+  if (context.platform === "win32")
+    spawnSync(
+      "reg.exe",
+      [
+        "DELETE",
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ApiNetworkRecorderBridge",
+        "/f",
+      ],
+      { windowsHide: true },
+    )
+}
+
+export const installTerminal = async (args: string[]): Promise<void> => {
+  let allowControls = args.includes("--allow-controls")
+  if (!args.includes("--accept-access")) {
+    if (!process.stdin.isTTY)
+      throw new Error(
+        "Run the installer in a terminal, or pass --accept-access to authorize reading stored API calls.",
+      )
+    const prompt = createInterface({ input: process.stdin, output: process.stdout })
+    try {
+      if (
+        !/^y(es)?$/i.test(
+          (await prompt.question("Allow Codex to read API calls stored in Chrome? [y/N] ")).trim(),
+        )
+      )
+        return
+      if (!allowControls)
+        allowControls = /^y(es)?$/i.test(
+          (
+            await prompt.question("Also allow start/stop recording and deep capture? [y/N] ")
+          ).trim(),
+        )
+    } finally {
+      prompt.close()
+    }
+  }
+  const { directory, executable } = integrationPaths()
+  const extensionId = args.find((arg) => arg.startsWith("--extension-id="))?.slice(15) || undefined
+  if (extensionId) extensionIdSchema.parse(extensionId)
+  else if (!detectExtensionIds(integrationPaths().chrome).length)
+    throw new Error("Install API Network Recorder in Chrome first, or pass --extension-id=YOUR_ID.")
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  if (resolve(executable) !== resolve(process.execPath)) {
+    // Replace atomically so an existing MCP/native-host process can finish during upgrades.
+    const temporary = executable + ".install-tmp"
+    copyFileSync(process.execPath, temporary)
+    chmodSync(temporary, 0o700)
+    renameSync(temporary, executable)
+  }
+  const notices = join(dirname(process.execPath), "THIRD_PARTY_NOTICES.txt")
+  if (existsSync(notices) && resolve(notices) !== resolve(directory, "THIRD_PARTY_NOTICES.txt"))
+    copyFileSync(notices, join(directory, "THIRD_PARTY_NOTICES.txt"))
+  configureIntegration(extensionId, allowControls)
+  console.log(`Integration installed at ${directory}. Restart Codex once and keep Chrome open.`)
+  console.log(`To uninstall: "${executable}" --uninstall`)
 }
 
 const showMessage = (message: string, buttons = "OK"): string => {
@@ -204,7 +277,7 @@ export const installInteractive = (): void => {
       "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ApiNetworkRecorderBridge"
     for (const [name, value] of Object.entries({
       DisplayName: "API Network Recorder AI Integration",
-      DisplayVersion: "0.4.3",
+      DisplayVersion: "0.4.4",
       Publisher: "API Network Recorder",
       UninstallString: `"${executable}" --uninstall-ui`,
     })) {

@@ -2,8 +2,9 @@ import { mkdirSync, existsSync, writeFileSync } from "node:fs"
 import { resolve, join } from "node:path"
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
+import { nativeBinary, nativeTarget, nativeTargets } from "./native-target.js"
 
-if (process.platform !== "win32") throw new Error("Build the Windows bridge on Windows")
+const target = nativeTarget()
 const run = (command: string, args: string[]) =>
   new Promise<void>((resolveResult, reject) => {
     const child = spawn(command, args, { windowsHide: true, stdio: "inherit" })
@@ -14,7 +15,9 @@ const run = (command: string, args: string[]) =>
   })
 const directory = resolve(".cache/bun-baseline-1.3.14")
 const runtime = join(directory, "package", "bin", "bun.exe")
-if (!existsSync(runtime)) {
+if (target === "windows-x64" && process.platform !== "win32")
+  throw new Error("Build the Windows bridge on Windows")
+if (target === "windows-x64" && !existsSync(runtime)) {
   mkdirSync(directory, { recursive: true })
   const response = await fetch(
     "https://registry.npmjs.org/@oven/bun-windows-x64-baseline/-/bun-windows-x64-baseline-1.3.14.tgz",
@@ -34,14 +37,18 @@ if (!existsSync(runtime)) {
 await run(process.execPath, [
   "build",
   "--compile",
-  "--target=bun-windows-x64-baseline",
-  `--compile-executable-path=${runtime}`,
+  `--target=${nativeTargets[target]}`,
+  ...(target === "windows-x64" ? [`--compile-executable-path=${runtime}`] : []),
   "--no-compile-autoload-dotenv",
   "--no-compile-autoload-bunfig",
-  "--windows-hide-console",
-  "--windows-title=API Network Recorder AI Integration",
-  "--windows-version=0.4.3.0",
+  ...(target === "windows-x64"
+    ? [
+        "--windows-hide-console",
+        "--windows-title=API Network Recorder AI Integration",
+        "--windows-version=0.4.4.0",
+      ]
+    : []),
   "native/main.ts",
   "--outfile",
-  "dist/native/api-network-recorder-bridge.exe",
+  nativeBinary(target),
 ])

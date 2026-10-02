@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { agentTools } from "../src/core/agent-tools.js"
-import { callExtension } from "./client.js"
-import { listConnections, loadConfig, VERSION } from "./config.js"
+import { VERSION } from "./config.js"
+import { executeTool } from "./tools.js"
 
 export const startMcp = async (): Promise<void> => {
   const server = new McpServer(
@@ -25,13 +25,7 @@ export const startMcp = async (): Promise<void> => {
     },
     async () => {
       try {
-        const config = loadConfig()
-        return result({
-          profiles: listConnections()
-            .filter((item) => config.extensionIds.includes(item.extensionId))
-            .map(({ profileId, extensionId }) => ({ profileId, extensionId })),
-          captureControlsAllowed: config.allowControls,
-        })
+        return result(await executeTool("list_profiles", {}))
       } catch {
         return {
           ...result({ error: "Run the API Network Recorder integration installer first." }),
@@ -50,7 +44,7 @@ export const startMcp = async (): Promise<void> => {
       },
       async (args: Record<string, unknown>) => {
         try {
-          return result(await callExtension(name, args))
+          return result(await executeTool(name, args))
         } catch (error) {
           return {
             ...result({ error: error instanceof Error ? error.message : String(error) }),

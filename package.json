@@ -1,6 +1,6 @@
 {
   "name": "api-network-recorder",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,7 +20,7 @@
     "build:native": "tsc --noEmit -p tsconfig.native.json && bun scripts/build-native.ts",
     "package:installer": "bun run build:native && bun scripts/package-installer.ts",
     "test:native": "bun test tests/native-bridge.test.ts",
-    "test:native:binary": "cross-env RECORDER_NATIVE_BINARY=dist/native/api-network-recorder-bridge.exe bun test tests/native-bridge.test.ts",
+    "test:native:binary": "bun scripts/test-native-binary.ts",
     "test:native:browser": "bun scripts/smoke-native-browser.ts",
     "test:installer": "bun scripts/verify-installer.ts"
   },

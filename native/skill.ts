@@ -4,11 +4,13 @@ import { createHash } from "node:crypto"
 import skill from "../skills/api-network-recorder/SKILL.md" with { type: "text" }
 import metadata from "../skills/api-network-recorder/agents/openai.yaml" with { type: "text" }
 import client from "../skills/api-network-recorder/scripts/invoke-recorder.ps1" with { type: "text" }
+import unixClient from "../skills/api-network-recorder/scripts/invoke-recorder.sh" with { type: "text" }
 
 export const skillAssets: Record<string, string> = {
   "SKILL.md": skill,
   "agents/openai.yaml": metadata,
   "scripts/invoke-recorder.ps1": client,
+  "scripts/invoke-recorder.sh": unixClient.replaceAll("\r\n", "\n"),
 }
 const MARKER = ".api-network-recorder-managed.json"
 const digest = (content: string) => createHash("sha256").update(content).digest("hex")

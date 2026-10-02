@@ -1,0 +1,2 @@
+installer/*.sh text eol=lf
+skills/**/scripts/*.sh text eol=lf

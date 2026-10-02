@@ -9,6 +9,7 @@ import { createConnection } from "node:net"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { encodeFrame, readFrames } from "../native/framing.ts"
+import { integrationPaths } from "../native/platform.ts"
 import {
   updateCodexConfig,
   removeCodexConfig,
@@ -81,10 +82,7 @@ test("installer writes an isolated installation, preserves Codex settings and up
     process.env.CODEX_HOME = join(root, "codex")
     mkdirSync(process.env.API_RECORDER_HOME)
     mkdirSync(process.env.CODEX_HOME)
-    writeFileSync(
-      join(process.env.API_RECORDER_HOME, "api-network-recorder-bridge.exe"),
-      "test executable",
-    )
+    writeFileSync(integrationPaths().executable, "test executable")
     const configPath = join(process.env.CODEX_HOME, "config.toml")
     const original = 'model = "test-model"\n[mcp_servers.other]\ncommand="other.exe"\n'
     writeFileSync(configPath, original)
@@ -225,7 +223,7 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       Array.from({ length: 8 }, (_, i) => String(i)),
     )
     expect(body(responses[0]).responseBody.value.synthetic).toBe("México 🧪")
-    if (bridgeBinary) {
+    if (bridgeBinary && process.platform === "win32") {
       const invokeSkill = (tool: string, args: object) =>
         new Promise<{ code: number | null; result: any }>((resolveResult, reject) => {
           const child = spawn(
@@ -267,6 +265,24 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       expect(read.result.id).toBe("skill-México-🧪")
       expect(read.result.responseBody.value.synthetic).toBe("México 🧪")
       const denied = await invokeSkill("start_recording", {})
+      expect(denied.code).toBe(1)
+      expect(denied.result.error).toContain("permission")
+    }
+    if (bridgeBinary) {
+      const invoke = async (tool: string, args: object) => {
+        const child = Bun.spawn([resolve(bridgeBinary), "--call", tool, JSON.stringify(args)], {
+          env: runtimeEnv(home),
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const output = await new Response(child.stdout).text()
+        expect(await new Response(child.stderr).text()).toBe("")
+        return { code: await child.exited, result: JSON.parse(output) }
+      }
+      const read = await invoke("get_request", { id: "terminal-México-🧪" })
+      expect(read.code).toBe(0)
+      expect(read.result.responseBody.value.synthetic).toBe("México 🧪")
+      const denied = await invoke("start_recording", {})
       expect(denied.code).toBe(1)
       expect(denied.result.error).toContain("permission")
     }
@@ -314,6 +330,17 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       (await client.callTool({ name: "start_recording", arguments: { profileId: secondId } }))
         .isError,
     ).not.toBe(true)
+    if (process.platform !== "win32") {
+      // A crashed Chrome host leaves its Unix socket behind; reconnection must recover it.
+      const crashed = hosts[hosts.length - 1]!
+      crashed.kill("SIGKILL")
+      await waitFor(() => crashed.signalCode !== null, "Crashed host exit")
+      await host(secondId)
+      expect(
+        body(await client.callTool({ name: "capture_status", arguments: { profileId: secondId } }))
+          .profileId,
+      ).toBe(secondId)
+    }
     const beforeRevocation = forwarded
     writeFileSync(
       join(home, "bridge.json"),
@@ -348,8 +375,8 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
     for (const client of clients) await client.close()
     for (const child of hosts) {
       child.stdin?.end()
-      await waitFor(() => child.exitCode !== null, "Host shutdown")
+      await waitFor(() => child.exitCode !== null || child.signalCode !== null, "Host shutdown")
     }
     rmSync(home, { recursive: true, force: true })
   }
-}, 20000)
+}, 60000)

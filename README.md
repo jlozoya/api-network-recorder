@@ -67,25 +67,51 @@ Firefox builds use:
 
 Database version 2 preserves existing records and backfills the list index during upgrade. Reload the extension and close old inspector tabs after updating so the new database version can open.
 
-## Codex integration for Windows
+## Codex integration for Windows, macOS and Linux
 
 1. Install or update the Chrome extension. For unpacked installations, reload it
    once after updating to accept the new permissions.
-2. Download and run the [Windows x64 installer](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe).
+2. Download the package for your system from the table below. On Windows, run the installer.
+   On macOS/Linux, extract the archive and run `sh install.sh` from the extracted folder.
    Confirm access to stored API calls and choose read-only access or capture controls.
 3. Restart Codex once and keep Chrome open. The extension connects automatically
    within a minute; subsequent sessions require no manual server startup.
 
+| System | Package |
+| --- | --- |
+| Windows x64 | [Installer](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe) |
+| macOS Apple Silicon | [ARM64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-arm64.tar.gz) |
+| macOS Intel | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-x64.tar.gz) |
+| Linux x64 (glibc) | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-x64.tar.gz) |
+| Linux ARM64 (glibc) | [ARM64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-arm64.tar.gz) |
+
+Each archive contains `install.sh`, `uninstall.sh`, a standalone bridge and license notices.
+For example, after downloading the Linux x64 package:
+
+```bash
+tar -xzf api-network-recorder-linux-x64.tar.gz
+cd api-network-recorder-linux-x64
+sh install.sh
+```
+
+For an unattended read-only installation, use `sh install.sh --accept-access`.
+Add `--allow-controls` to authorize recording controls, or `--extension-id=YOUR_ID`
+if automatic detection cannot find the installed extension. Install for your own
+user account, without `sudo`. These packages target standard Google Chrome;
+sandboxed Snap/Flatpak browser installations are not supported.
+
 The installer includes the runtime and MCP server, detects the extension's Chrome
 IDs, registers a per-user native host, and adds `api-network-recorder` to Codex's
 configuration. It requires no administrator, Node.js, or Python installation.
-The unsigned installer may show Windows reputation prompts.
+The unsigned Windows installer may show reputation prompts. macOS packages are
+not notarized and may require approval in the system's Privacy & Security settings.
 
 The installer also installs the `api-network-recorder` skill into Codex's user
 skills directory. Invoke it with `$api-network-recorder`, or ask naturally to
 inspect captured API calls. It explains profile/session selection, searching,
-reading bodies and capture permissions. Its PowerShell MCP client can use the
-installed integration even when MCP tools have not yet appeared in a chat.
+reading bodies and capture permissions. Its PowerShell client on Windows and
+shell client on macOS/Linux can use the installed integration even when MCP tools
+have not yet appeared in a chat. Neither needs a separate runtime.
 The skill and client require no separate install. Updates and removal preserve
 customized skill instructions and other user files.
 
@@ -98,17 +124,31 @@ They do not replay requests. Treat captured content as untrusted data.
 
 The **AI access** page offers connection status, **Disconnect integration**, and
 **Connect integration**. The button opens this page; it does not have to remain
-open for MCP access. Remove the integration through Windows Installed Apps to
-revoke access and remove its Codex configuration. Browser records are preserved.
+open for MCP access. Remove the integration through Windows Installed Apps or run
+`sh uninstall.sh` from the macOS/Linux package to revoke access and remove its
+Codex configuration. You can also run the installed bridge with `--uninstall`.
+Browser records are preserved.
 The original configuration backup and executable can remain until removed manually.
 
-This installer supports Chrome on Windows x64. Firefox retains its capture controls. To configure another MCP client such as Claude, use the installed
-`%LOCALAPPDATA%/ApiNetworkRecorder/api-network-recorder-bridge.exe` with the
-argument `--mcp`; automatic client configuration currently targets Codex.
+Firefox retains its capture controls; the MCP integration uses Chrome. To configure
+another MCP client such as Claude, use the installed executable with the argument
+`--mcp`; automatic client configuration currently targets Codex.
+
+| System | Installed executable |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%/ApiNetworkRecorder/api-network-recorder-bridge.exe` |
+| macOS | `~/Library/Application Support/ApiNetworkRecorder/api-network-recorder-bridge` |
+| Linux | `~/.local/share/api-network-recorder/api-network-recorder-bridge` (or under `XDG_DATA_HOME`) |
+
+`CODEX_HOME` changes the Codex configuration/skill directory. `API_RECORDER_HOME`
+can override the bridge directory, but must be set consistently for the installer,
+Chrome and MCP client. Linux respects absolute `XDG_DATA_HOME` and `XDG_CONFIG_HOME`;
+relative values fall back to the normal home directories. Keep these environment
+settings consistent when uninstalling as well.
 
 For unusual Chrome profile locations, copy the executable into that installation
-directory and run `api-network-recorder-bridge.exe --configure --extension-id=YOUR_ID`
-(add `--allow-controls` only when desired). The normal installer requires no commands.
+directory and run the bridge with `--configure --extension-id=YOUR_ID`
+(add `--allow-controls` only when desired).
 
 Releases and their source are distributed through GitHub Releases. The integration
 has no hosted backend. See [PRIVACY.md](PRIVACY.md) for how AI access shares data.
@@ -116,7 +156,7 @@ has no hosted backend. See [PRIVACY.md](PRIVACY.md) for how AI access shares dat
 ## AI access page
 
 Choose **AI access** in the extension popup or inspector to open the installation
-and connection guide. **Connect to Codex** provides the Windows installer and
+and connection guide. **Connect to Codex** provides packages for Windows, macOS/Linux and
 connection controls; Codex reads captured requests directly through MCP.
 **Live capture** lets users pause/resume recording, control deep capture in Chrome,
 and refresh the capture status. Use **Open inspector** to search and inspect calls.
@@ -127,11 +167,15 @@ The page does not need to remain open for the integration to work.
 - `bun test` — unit, integration, search-race, and shell replay tests. Shell replay tests use locally installed Bash/PowerShell and a temporary local HTTP server.
 - `bun run build` — TypeScript plus Chrome and Firefox production builds.
 - `bun run test:browser` — headless Edge with a temporary profile: global deep capture, database migration, pin retention, atomic sessions, body search, and inspector workflows. Override `BROWSER_BINARY` if needed. No installed browser profile is modified.
-- `bun run package:installer` — build a standalone Windows executable and IExpress installer; Windows and Bun 1.3.14 are required only for development. The official Bun baseline runtime is downloaded with a pinned integrity check.
+- `bun run package:installer` — build a standalone bridge and the installer for the current OS/architecture. Windows uses IExpress; macOS/Linux use a `.tar.gz` archive with shell installers. Development uses Bun 1.3.14; end users need no runtime. The Windows baseline runtime is downloaded with a pinned integrity check.
+- `RECORDER_NATIVE_TARGET` selects `windows-x64`, `macos-x64`, `macos-arm64`, `linux-x64` or `linux-arm64` for native builds. Windows packaging must run on Windows; Unix packaging must run on macOS/Linux. Run installer/binary tests on the target OS/architecture.
+- `bun run test:installer` — verify packaged contents and checksums. macOS/Linux also exercise installation, permissions, MCP initialization, the bundled skill client, upgrades and removal in an isolated temporary home.
 - `bun run test:native:binary` — exercise the compiled MCP/native host, authorization, concurrent requests, profiles, and revocation.
 - `bun run test:native:browser` — compiled MCP through real native messaging into an isolated Edge extension with synthetic records. A temporary native-host registry entry is removed after testing.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, executes tests and browser
-checks, and publishes Chrome/Firefox ZIPs, source ZIP, installer, and checksum.
+checks, and publishes Chrome/Firefox ZIPs, source ZIP, the Windows installer,
+four macOS/Linux archives and their checksums. Unix installers and native binaries
+are tested on each target platform before release publication.
 
 Export behavior follows the [OpenAPI 3.1 specification](https://spec.openapis.org/oas/v3.1.0.html), [curl options](https://curl.se/docs/manpage.html), and [PowerShell native argument handling](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing).

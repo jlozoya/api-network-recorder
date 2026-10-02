@@ -2,16 +2,22 @@ import { spawn } from "node:child_process"
 import { mkdirSync, existsSync, writeFileSync, readFileSync, copyFileSync } from "node:fs"
 import { resolve, join } from "node:path"
 import { createHash } from "node:crypto"
+import { packageUnixInstaller } from "./package-unix-installer.js"
+import { nativeTarget } from "./native-target.js"
 
-if (process.platform !== "win32") throw new Error("The installer must be packaged on Windows")
-const binary = resolve("dist/native/api-network-recorder-bridge.exe")
-if (!existsSync(binary)) throw new Error("Run bun run build:native first")
-const release = resolve("release")
-mkdirSync(release, { recursive: true })
-const output = join(release, "api-network-recorder-windows-x64-setup.exe")
-const sed = resolve("dist/native/installer.sed")
-copyFileSync(resolve("THIRD_PARTY_NOTICES.txt"), resolve("dist/native/THIRD_PARTY_NOTICES.txt"))
-const content = `[Version]
+if (process.platform !== "win32") {
+  packageUnixInstaller()
+} else {
+  if (nativeTarget() !== "windows-x64")
+    throw new Error("Package macOS/Linux installers on macOS or Linux")
+  const binary = resolve("dist/native/api-network-recorder-bridge.exe")
+  if (!existsSync(binary)) throw new Error("Run bun run build:native first")
+  const release = resolve("release")
+  mkdirSync(release, { recursive: true })
+  const output = join(release, "api-network-recorder-windows-x64-setup.exe")
+  const sed = resolve("dist/native/installer.sed")
+  copyFileSync(resolve("THIRD_PARTY_NOTICES.txt"), resolve("dist/native/THIRD_PARTY_NOTICES.txt"))
+  const content = `[Version]
 Class=IEXPRESS
 SEDVersion=3
 [Options]
@@ -51,16 +57,17 @@ SourceFiles0=${resolve("dist/native")}\\
 %FILE0%=
 %FILE1%=
 `
-writeFileSync(sed, content.replaceAll("\n", "\r\n"), "ascii")
-const compiler = join(process.env.SystemRoot || "C:\\Windows", "System32", "iexpress.exe")
-await new Promise<void>((resolveResult, reject) => {
-  const process = spawn(compiler, ["/N", "/Q", sed], { windowsHide: true, stdio: "inherit" })
-  process.on("error", reject)
-  process.on("exit", (code) =>
-    code === 0 ? resolveResult() : reject(new Error(`IExpress failed: ${code}`)),
-  )
-})
-if (!existsSync(output)) throw new Error("IExpress did not create an installer")
-const digest = createHash("sha256").update(readFileSync(output)).digest("hex")
-writeFileSync(output + ".sha256", `${digest}  ${output.split(/[\\/]/).pop()}\n`)
-console.log(`Created ${output}`)
+  writeFileSync(sed, content.replaceAll("\n", "\r\n"), "ascii")
+  const compiler = join(process.env.SystemRoot || "C:\\Windows", "System32", "iexpress.exe")
+  await new Promise<void>((resolveResult, reject) => {
+    const process = spawn(compiler, ["/N", "/Q", sed], { windowsHide: true, stdio: "inherit" })
+    process.on("error", reject)
+    process.on("exit", (code) =>
+      code === 0 ? resolveResult() : reject(new Error(`IExpress failed: ${code}`)),
+    )
+  })
+  if (!existsSync(output)) throw new Error("IExpress did not create an installer")
+  const digest = createHash("sha256").update(readFileSync(output)).digest("hex")
+  writeFileSync(output + ".sha256", `${digest}  ${output.split(/[\\/]/).pop()}\n`)
+  console.log(`Created ${output}`)
+}

@@ -1,9 +1,24 @@
 import { createServer, type Socket } from "node:net"
-import { mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  writeFileSync,
+  unlinkSync,
+  readFileSync,
+} from "node:fs"
 import { join } from "node:path"
 import { randomUUID, timingSafeEqual } from "node:crypto"
 import { agentTools, isAgentTool } from "../src/core/agent-tools.js"
-import { appDirectory, loadConfig, pipeForProfile, profileIdSchema } from "./config.js"
+import {
+  appDirectory,
+  loadConfig,
+  pipeForProfile,
+  profileIdSchema,
+  socketDirectory,
+  connectionSchema,
+} from "./config.js"
 import { readFrames, writeFrame } from "./framing.js"
 
 export const startNativeHost = (origin: string): void => {
@@ -12,6 +27,7 @@ export const startNativeHost = (origin: string): void => {
   if (!extensionId) throw new Error("This extension is not authorized by the installer")
   let registered = false
   let connectionFile: string | undefined
+  let boundSocket: string | undefined
   const clients = new Set<Socket>()
   const pending = new Map<string, { socket: Socket; timer: ReturnType<typeof setTimeout> }>()
   const server = createServer((socket) => {
@@ -84,6 +100,13 @@ export const startNativeHost = (origin: string): void => {
     for (const call of pending.values()) clearTimeout(call.timer)
     for (const socket of clients) socket.destroy()
     server.close()
+    if (boundSocket && process.platform !== "win32") {
+      try {
+        unlinkSync(boundSocket)
+      } catch {
+        /* Socket already closed. */
+      }
+    }
     if (connectionFile) {
       try {
         if (JSON.parse(readFileSync(connectionFile, "utf8")).pid === process.pid)
@@ -108,9 +131,37 @@ export const startNativeHost = (origin: string): void => {
         const profileId = profileIdSchema.parse(message.profileId)
         if (message.extensionId !== extensionId) throw new Error("Extension identity mismatch")
         registered = true
-        server.listen(pipeForProfile(profileId), () => {
+        const pipe = pipeForProfile(profileId)
+        if (process.platform !== "win32") {
+          const socketDir = socketDirectory()
+          mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+          const stat = lstatSync(socketDir)
+          if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid!())
+            throw new Error("Unsafe native socket directory")
+          chmodSync(socketDir, 0o700)
+          if (existsSync(pipe)) {
+            const previous = connectionSchema.parse(
+              JSON.parse(
+                readFileSync(join(appDirectory(), "connections", `${profileId}.json`), "utf8"),
+              ),
+            )
+            if (previous.pipe !== pipe || previous.profileId !== profileId)
+              throw new Error("Socket does not match the registered profile")
+            try {
+              process.kill(previous.pid, 0)
+              throw new Error("This Chrome profile already has a connected native host")
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error
+            }
+            if (!lstatSync(pipe).isSocket()) throw new Error("Invalid native socket file")
+            unlinkSync(pipe)
+          }
+        }
+        server.listen(pipe, () => {
+          boundSocket = pipe
+          if (process.platform !== "win32") chmodSync(pipe, 0o600)
           const directory = join(appDirectory(), "connections")
-          mkdirSync(directory, { recursive: true })
+          mkdirSync(directory, { recursive: true, mode: 0o700 })
           connectionFile = join(directory, `${profileId}.json`)
           writeFileSync(
             connectionFile,
