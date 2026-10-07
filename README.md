@@ -223,6 +223,11 @@ The page does not need to remain open for the integration to work.
 
 ## Verification
 
+`bun install` applies `patches/zod@4.6.5.patch` to two explanatory comments in
+Zod's ESM build. This prevents Rollup from interpreting prose as pure annotations;
+the actual optimization annotations and runtime code are preserved. Remove the
+patch when upgrading to a Zod release that fixes those comments.
+
 - `bun test` — unit, integration, search-race, and shell replay tests. Shell replay tests use locally installed Bash/PowerShell and a temporary local HTTP server.
 - `bun run build` — TypeScript plus Chrome and Firefox production builds.
 - `bun run test:browser` — headless Edge with a temporary profile: global deep capture, database migration, pin retention, atomic sessions, body search, and inspector workflows. Override `BROWSER_BINARY` if needed. No installed browser profile is modified.
