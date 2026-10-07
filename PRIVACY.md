@@ -48,7 +48,10 @@ The extension does not use captured data for advertising, analytics, profiling, 
 
 Captured network records and settings are stored locally in the user’s browser using browser storage technologies such as IndexedDB and extension storage.
 
-API Network Recorder does not upload captured network data to any external server.
+API Network Recorder does not upload captured network data to a collection server.
+When the user separately enables HTTP replay, the local integration can send an
+edited captured request to the original API origin within the configured origin
+allowlist, including the explicitly selected authentication headers.
 
 The extension does not operate a backend service for collecting, storing, or analyzing user data.
 
@@ -66,7 +69,15 @@ under that client's settings and privacy policy.
 
 The integration stores its executable, permission settings, a local authentication
 secret, and connection metadata under `%LOCALAPPDATA%/ApiNetworkRecorder`.
-It does not persist captured API records outside the browser. The installer adds
+Ordinary capture records remain in Chrome. HTTP replay results are saved locally
+in the integration's `replays/` directory (at most 50 results), including submitted
+bodies, response bodies, timings and comparisons. Authentication header values
+and Set-Cookie values are redacted there; URLs and bodies may still contain
+sensitive data. Replay uses captured credentials rather than current browser
+cookies. Replay permission is separate from capture-control permission and is
+disabled by default. Users can revoke it with `--configure-replay` without
+`--allow-replay`. No automatic retries or redirect following are performed.
+The installer adds
 its MCP entry to Codex's configuration and preserves unrelated settings, with
 a backup of the existing configuration. Communication uses native messaging,
 MCP standard input/output, and authenticated local named pipes.
@@ -129,6 +140,8 @@ Users can disconnect AI access from the AI access page, or remove the integratio
 from Windows Installed Apps. Uninstalling revokes local access and removes its
 Codex entry without deleting captured browser records. The configuration backup
 and executable may remain until existing processes close and users remove them.
+Local replay history also remains after uninstalling or clearing browser data;
+users can remove the integration's `replays/` directory to clear that history.
 
 ## Children’s Privacy
 

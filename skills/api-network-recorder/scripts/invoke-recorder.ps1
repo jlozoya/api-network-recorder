@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('list_profiles', 'capture_status', 'search_requests', 'get_request', 'list_sessions', 'start_recording', 'stop_recording', 'start_deep_capture', 'stop_deep_capture')]
+  [ValidateSet('list_profiles', 'capture_status', 'search_requests', 'get_request', 'list_sessions', 'start_recording', 'stop_recording', 'start_deep_capture', 'stop_deep_capture', 'prepare_replay', 'replay_request', 'get_replay', 'list_replays')]
   [string]$Tool = 'list_profiles',
   [string]$ArgumentsJson = '{}',
   [string]$BridgePath = (Join-Path $env:LOCALAPPDATA 'ApiNetworkRecorder/api-network-recorder-bridge.exe')

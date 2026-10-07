@@ -108,6 +108,7 @@ const createUi = async (
     HTMLSelectElement: Element,
     HTMLTextAreaElement: Element,
     document: {
+      addEventListener: () => {},
       querySelector: (selector) => elements.get(selector) ?? null,
       querySelectorAll: () => [],
       activeElement: null,
@@ -118,6 +119,7 @@ const createUi = async (
       timers.set(id, { callback, duration })
       return id
     },
+    addEventListener: () => {},
     clearTimeout: (id) => timers.delete(id),
     setInterval: (callback) => {
       intervals.push(callback)

@@ -85,6 +85,57 @@ button:hover {
   background: #3f3f46;
 }
 
+.recorderTooltip {
+  position: fixed;
+  z-index: 1000;
+  width: max-content;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid #3f4b5e;
+  border-radius: 10px;
+  color: #f4f4f5;
+  background: #1b2029;
+  box-shadow: 0 8px 28px #0008;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  animation: tooltipAppear 120ms ease-out;
+}
+
+.recorderTooltip[hidden] {
+  display: none;
+}
+
+.tooltipTitle {
+  display: block;
+  color: #99f6e4;
+  font-size: 12px;
+}
+
+.tooltipDescription {
+  margin-top: 4px;
+  color: #cbd5e1;
+}
+
+.recorderTooltip[data-kind="url"] .tooltipDescription {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+@keyframes tooltipAppear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recorderTooltip {
+    animation: none;
+  }
+}
+
 button.danger {
   border-color: #7f1d1d;
   color: #fecaca;
@@ -270,6 +321,7 @@ button[data-active="true"]:not(.danger):hover {
 }
 
 .record {
+  position: relative;
   border-bottom: 1px solid #1e293b;
   padding: 12px;
   cursor: pointer;
@@ -282,6 +334,50 @@ button[data-active="true"]:not(.danger):hover {
 
 .record.selected {
   box-shadow: inset 3px 0 0 #14b8a6;
+}
+
+.record:has(.recordActions) .recordMeta {
+  padding-right: 32px;
+}
+
+.record:has(.recordPin) .recordMeta {
+  padding-right: 64px;
+}
+
+.recordActions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+.recordAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border-color: transparent;
+  color: #a1a1aa;
+  background: transparent;
+}
+
+.recordAction:hover,
+.recordAction:focus-visible {
+  color: #f4f4f5;
+  background: #27272a;
+}
+
+.recordAction:focus-visible {
+  outline: 2px solid #14b8a6;
+  outline-offset: 2px;
+}
+
+.recordPin[aria-pressed="true"] {
+  color: #5eead4;
+  background: #134e4a;
 }
 
 .recordMeta {
@@ -326,6 +422,11 @@ button[data-active="true"]:not(.danger):hover {
 }
 
 .url {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   margin-top: 4px;
   color: #d4d4d8;
   font-size: 12px;
@@ -348,9 +449,16 @@ button[data-active="true"]:not(.danger):hover {
 
 .detailsHeader {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.detailsHeader > div:first-child {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detailsUrl {
@@ -359,11 +467,28 @@ button[data-active="true"]:not(.danger):hover {
   word-break: break-all;
 }
 
+.detailsHeader > .detailsUrl {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin-top: 0;
+}
+
 .detailsActions {
   display: flex;
+  flex: 1 1 640px;
   flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
+  align-items: center;
   justify-content: flex-end;
+}
+
+.detailsActions > button,
+.detailsActions > select {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-height: 38px;
+  white-space: nowrap;
 }
 
 .summaryGrid {
@@ -456,6 +581,45 @@ pre {
   color: #a1a1aa;
   font-size: 12px;
   word-break: break-word;
+}
+
+.detailsLoading {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+}
+
+.detailsSpinner {
+  width: 44px;
+  height: 44px;
+  border: 3px solid #14b8a626;
+  border-top-color: #5eead4;
+  border-right-color: #14b8a6;
+  border-radius: 50%;
+  box-shadow: 0 0 24px #14b8a61a;
+  animation: detailsSpin 800ms linear infinite;
+}
+
+.detailsLoadingLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes detailsSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detailsSpinner {
+    animation: none;
+  }
 }
 
 .empty {
@@ -561,14 +725,6 @@ pre {
 
   .details {
     min-height: 0;
-  }
-
-  .detailsHeader {
-    flex-direction: column;
-  }
-
-  .detailsActions {
-    justify-content: flex-start;
   }
 
   .summaryGrid {

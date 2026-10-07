@@ -26,17 +26,20 @@ import {
 import type { NetworkRecordPreview, SavedSession } from "../core/record-preview.js"
 import type { CaptureTabStatus } from "../core/capture-tab-status.js"
 import { compareRecords } from "../core/compare-records.js"
+import { createTooltips } from "./tooltips.js"
 
 import "./app.css"
 
 const AUTO_REFRESH_INTERVAL_MS = 2_000
 const RECORD_LOAD_TIMEOUT_MS = 30_000
 
-const app = document.querySelector("#app")
+const app = document.querySelector<HTMLElement>("#app")
 
 if (!app) {
   throw new Error("Missing #app")
 }
+
+const tooltips = createTooltips(app)
 
 interface AppState {
   records: NetworkRecordPreview[]
@@ -147,6 +150,9 @@ const escapeHtml = (value: string): string =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;")
 
+const tooltipAttributes = (title: string, description?: string, kind?: "url"): string =>
+  `data-tooltip="${escapeHtml(title)}"${description ? ` data-tooltip-description="${escapeHtml(description)}"` : ""}${kind ? ` data-tooltip-kind="${kind}"` : ""}`
+
 const sendMessage = async <T>(message: ExtensionMessage): Promise<T> => {
   const response = (await chrome.runtime.sendMessage(message)) as ExtensionResponse<T>
 
@@ -167,6 +173,8 @@ type ToolbarIcon =
   | "braces"
   | "file"
   | "trash"
+  | "pin"
+  | "copy"
 
 const icon = (name: ToolbarIcon): string => {
   const paths: Record<ToolbarIcon, string> = {
@@ -179,6 +187,8 @@ const icon = (name: ToolbarIcon): string => {
     braces: `<path d="M8 3H7a3 3 0 0 0-3 3v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a3 3 0 0 0 3 3h1"/><path d="M16 3h1a3 3 0 0 1 3 3v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a3 3 0 0 1-3 3h-1"/>`,
     file: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/>`,
     trash: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>`,
+    pin: `<path d="M16 9V3H8v6l-2 3v2h12v-2z"/><path d="M12 14v7"/>`,
+    copy: `<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
   }
 
   return `<svg class="buttonIcon" viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`
@@ -195,12 +205,22 @@ const renderActionButton = (
   },
 ): string => {
   const classes = ["actionButton", options?.className].filter(Boolean).join(" ")
+  const descriptions: Record<string, string> = {
+    toggleListening: state.listeningPaused ? "Resume recording new requests." : "Pause recording new requests.",
+    refresh: "Reload the list of recorded requests.",
+    toggleDeepCapture: state.deepCaptureEnabled ? "Stop capturing response bodies with deep capture." : "Capture response bodies with deep capture.",
+    clear: state.sessionId ? "Switch to Live capture to clear unpinned requests." : "Delete unpinned requests from live capture. Pinned requests are kept.",
+    exportJson: "Download recorded requests as JSON.",
+    exportMarkdown: "Download a Markdown summary of observed endpoints.",
+    exportOpenApi: "Download an OpenAPI draft from observed endpoints.",
+  }
 
   return `
     <button
       id="${id}"
       class="${classes}"
       type="button"
+      ${tooltipAttributes(label, descriptions[id])}
       ${options?.active ? `data-active="true"` : ""}
       ${options?.disabled ? "disabled" : ""}
     >
@@ -352,7 +372,7 @@ const renderSection = (title: string, copyKey: string, content: string): string 
   return `
     <div class="sectionHeader">
       <h3>${escapeHtml(title)}</h3>
-      <button class="copySection" data-copy-key="${escapeHtml(copyKey)}" type="button">Copy</button>
+      <button class="copySection" data-copy-key="${escapeHtml(copyKey)}" type="button" ${tooltipAttributes(`Copy ${title.toLowerCase()}`)}>Copy</button>
     </div>
     <pre>${escapeHtml(content)}</pre>
   `
@@ -703,10 +723,10 @@ const renderToolbar = (): string => {
         ${state.sessions.map((session) => `<option value="${escapeHtml(session.id)}" ${state.sessionId === session.id ? "selected" : ""}>${escapeHtml(session.name)} (${session.count})</option>`).join("")}
       </select></label>
       <input id="sessionName" aria-label="New session name" placeholder="Session name" maxlength="120" value="${escapeHtml(state.sessionName)}" />
-      <button id="saveSession" type="button" ${state.records.length ? "" : "disabled"}>Save session visible requests</button>
-      ${state.sessionId ? '<button id="deleteSession" class="danger" type="button">Delete session</button>' : ""}
-      <button id="captureTabs" type="button">Tab status</button>
-      <button id="openAgent" type="button">AI access</button>
+      <button id="saveSession" type="button" ${tooltipAttributes("Save session", "Save the visible requests as a snapshot.")} ${state.records.length ? "" : "disabled"}>Save session visible requests</button>
+      ${state.sessionId ? `<button id="deleteSession" class="danger" type="button" ${tooltipAttributes("Delete session", "Permanently delete this saved snapshot.")}>Delete session</button>` : ""}
+      <button id="captureTabs" type="button" ${tooltipAttributes("Tab status", "See which tabs are being captured and any capture errors.")}>Tab status</button>
+      <button id="openAgent" type="button" ${tooltipAttributes("AI access", "Open the settings for access through the local integration.")}>AI access</button>
     </section>
     ${state.notice ? `<div class="notice" role="status">${escapeHtml(state.notice)}<button id="dismissNotice" type="button">Dismiss</button></div>` : ""}
     <nav class="tabs">
@@ -729,15 +749,18 @@ const renderRequestList = (): string => {
     .map(
       (record) => `
         <article class="record ${state.selectedRecordId === record.id ? "selected" : ""}" data-id="${escapeHtml(record.id)}">
+          <div class="recordActions">
+            <button class="recordAction recordCopyUrl" type="button" data-record-id="${escapeHtml(record.id)}" ${tooltipAttributes("Copy URL", "Copy the full request URL, including query parameters.")} aria-label="Copy URL">${icon("copy")}</button>
+            ${!state.sessionId ? `<button class="recordAction recordPin" type="button" data-record-id="${escapeHtml(record.id)}" ${tooltipAttributes(record.pinned ? "Unpin" : "Pin", record.pinned ? "Allow this request to be removed by the capture limit or Clear unpinned." : "Keep this request when the capture limit is reached or unpinned requests are cleared.")} aria-label="${record.pinned ? "Unpin" : "Pin"}" aria-pressed="${record.pinned}">${icon("pin")}</button>` : ""}
+          </div>
           <div class="recordMeta">
             <strong>${escapeHtml(record.method)}</strong>
-            ${record.pinned ? "<span>Pinned</span>" : ""}
             <span class="${getStatusClass(record)}">${escapeHtml(formatStatus(record))}</span>
             <span>${escapeHtml(record.source)}</span>
             <span>${record.durationMs ?? "-"}ms</span>
           </div>
           <div class="host">${escapeHtml(getHost(record.url))}</div>
-          <div class="url">${escapeHtml(getPath(record.url))}</div>
+          <div class="url" ${tooltipAttributes("Request URL", record.url, "url")}>${escapeHtml(getPath(record.url))}</div>
           ${record.error ? `<div class="recordError">${escapeHtml(record.error)}</div>` : ""}
         </article>
       `,
@@ -765,7 +788,7 @@ const renderEndpointList = (): string => {
             <span>${group.averageDurationMs ?? "-"}ms avg</span>
           </div>
           <div class="host">${escapeHtml(group.origin)}</div>
-          <div class="url">${escapeHtml(group.normalizedPath)}</div>
+          <div class="url" ${tooltipAttributes("Endpoint URL", group.origin + group.normalizedPath, "url")}>${escapeHtml(group.normalizedPath)}</div>
         </article>
       `,
     )
@@ -776,7 +799,10 @@ const renderSelectedRequest = (): string => {
   const record = selectedRecord()
 
   if (!record) {
-    return `<p class="empty">${escapeHtml(detailLoading ? "Loading request details…" : (detailError ?? (state.selectedRecordId ? "Request no longer available. Refresh the list." : "Select a request.")))}</p>`
+    if (detailLoading) {
+      return `<div class="detailsLoading" role="status"><span class="detailsSpinner" aria-hidden="true"></span><span class="detailsLoadingLabel">Loading request details</span></div>`
+    }
+    return `<p class="empty">${escapeHtml(detailError ?? (state.selectedRecordId ? "Request no longer available. Refresh the list." : "Select a request."))}</p>`
   }
 
   const domain = normalizeIgnoredDomain(getHost(record.url))
@@ -786,16 +812,14 @@ const renderSelectedRequest = (): string => {
     <section class="detailsHeader">
       <div>
         <h2>${escapeHtml(record.method)} ${escapeHtml(formatStatus(record))}</h2>
-        <p class="detailsUrl">${escapeHtml(record.url)}</p>
       </div>
       <div class="detailsActions">
-        <button id="copyDomain" type="button">Copy domain</button>
-        <select id="curlShell" aria-label="cURL terminal"><option value="bash" ${state.curlShell === "bash" ? "selected" : ""}>Bash</option><option value="powershell" ${state.curlShell === "powershell" ? "selected" : ""}>PowerShell 7.3+</option></select>
-        <button id="copyCurl" type="button">Copy cURL</button>
-        ${!state.sessionId ? `<button id="pinRequest" type="button">${state.records.find((item) => item.id === record.id)?.pinned ? "Unpin request" : "Pin request"}</button>` : ""}
-        <button id="setBaseline" type="button">Use as comparison A</button>
-        ${compareBaseline ? '<button id="compareRequest" type="button">Compare A → this request</button><button id="clearBaseline" type="button">Clear A</button>' : ""}
-        <button id="copyResponse" type="button">Copy response</button>
+        <button id="copyDomain" type="button" ${tooltipAttributes("Copy domain", "Copy only the hostname of this request.")}>Copy domain</button>
+        <select id="curlShell" aria-label="cURL terminal" ${tooltipAttributes("cURL terminal", "Choose Bash or PowerShell formatting for the copied command.")}><option value="bash" ${state.curlShell === "bash" ? "selected" : ""}>Bash</option><option value="powershell" ${state.curlShell === "powershell" ? "selected" : ""}>PowerShell 7.3+</option></select>
+        <button id="copyCurl" type="button" ${tooltipAttributes("Copy cURL", "Copy this request as a cURL command.")}>Copy cURL</button>
+        <button id="setBaseline" type="button" ${tooltipAttributes("Use as comparison A", "Keep this request as the baseline for a comparison.")}>Use as comparison A</button>
+        ${compareBaseline ? `<button id="compareRequest" type="button" ${tooltipAttributes("Compare requests", "Compare this request with comparison A.")}>Compare A → this request</button><button id="clearBaseline" type="button" ${tooltipAttributes("Clear comparison A", "Remove the current comparison baseline.")}>Clear A</button>` : ""}
+        <button id="copyResponse" type="button" ${tooltipAttributes("Copy response", "Copy the captured response body.")}>Copy response</button>
         ${
           domain
             ? `
@@ -803,6 +827,7 @@ const renderSelectedRequest = (): string => {
                 id="toggleIgnoreDomain"
                 type="button"
                 data-domain="${escapeHtml(domain)}"
+                ${tooltipAttributes(domainIgnored ? "Stop ignoring domain" : "Ignore domain", domainIgnored ? "Resume recording requests from this domain." : "Exclude new requests from this domain from capture.")}
                 ${domainIgnored ? `data-active="true"` : ""}
               >
                 ${domainIgnored ? "Stop ignoring domain" : "Ignore this domain"}
@@ -811,6 +836,7 @@ const renderSelectedRequest = (): string => {
             : ""
         }
       </div>
+      <p class="detailsUrl">${escapeHtml(record.url)}</p>
     </section>
 
     ${compareBaseline ? `<p class="comparisonLabel">Comparison A: ${escapeHtml(compareBaseline.method + " " + compareBaseline.url + " · " + compareBaseline.completedAt)}</p>` : ""}
@@ -847,11 +873,11 @@ const renderSelectedEndpoint = (): string => {
     <section class="detailsHeader">
       <div>
         <h2>${escapeHtml(group.method)} ${escapeHtml(group.normalizedPath)}</h2>
-        <p class="detailsUrl">${escapeHtml(group.origin)}</p>
       </div>
       <div class="detailsActions">
-        <button id="copyEndpointMarkdown" type="button">Copy Markdown</button>
+        <button id="copyEndpointMarkdown" type="button" ${tooltipAttributes("Copy Markdown", "Copy a Markdown summary of this endpoint.")}>Copy Markdown</button>
       </div>
+      <p class="detailsUrl">${escapeHtml(group.origin)}</p>
     </section>
 
     <section class="summaryGrid">
@@ -965,6 +991,7 @@ const updateInspector = (html: string, layout: HTMLElement): void => {
 }
 
 const render = (options?: RenderOptions): void => {
+  tooltips.beforeRender()
   const previousPanelScrollState = options?.preservePanelScroll ? getPanelScrollState() : null
   const focused = document.activeElement instanceof HTMLInputElement ? document.activeElement : null
   const focusedId = focused?.id
@@ -973,11 +1000,13 @@ const render = (options?: RenderOptions): void => {
 
   if (state.error) {
     renderError(state.error)
+    tooltips.refresh()
     return
   }
 
   if (state.loading) {
     renderLoading()
+    tooltips.refresh()
     return
   }
 
@@ -1001,6 +1030,7 @@ const render = (options?: RenderOptions): void => {
   else app.innerHTML = html
 
   bindEvents()
+  tooltips.refresh()
   if (focusedId) {
     const input = document.getElementById(focusedId) as HTMLInputElement | null
     if (input && input !== document.activeElement) input.focus({ preventScroll: true })
@@ -1198,13 +1228,28 @@ const bindEvents = (): void => {
       await reload()
     })
   })
-  unboundControls.querySelector("#pinRequest")?.addEventListener("click", (event) => {
-    const record = state.records.find((item) => item.id === state.selectedRecordId)
-    if (record)
-      void runAction(event, async () => {
-        await setNetworkRecordPinned(record.id, !record.pinned)
-        await reload({ silent: true })
-      })
+  unboundControls.querySelectorAll<HTMLButtonElement>(".recordCopyUrl").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation()
+      const record = state.records.find((item) => item.id === button.dataset.recordId)
+      if (record)
+        void runAction(event, async () => {
+          await copyText(record.url)
+          flashCopied(button)
+        })
+    })
+  })
+  unboundControls.querySelectorAll<HTMLButtonElement>(".recordPin").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation()
+      if (state.sessionId) return
+      const record = state.records.find((item) => item.id === button.dataset.recordId)
+      if (record)
+        void runAction(event, async () => {
+          await setNetworkRecordPinned(record.id, !record.pinned)
+          await reload({ silent: true })
+        })
+    })
   })
   unboundControls.querySelector("#setBaseline")?.addEventListener("click", () => {
     compareBaseline = selectedRecord() ?? null

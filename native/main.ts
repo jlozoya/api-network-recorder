@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { installAgentSkill } from "./skill.js"
 import { executeTool } from "./tools.js"
+import { configureReplay } from "./replay-tools.js"
 import {
   configureIntegration,
   installInteractive,
@@ -36,6 +37,12 @@ try {
       args.find((arg) => arg.startsWith("--extension-id="))?.slice(15) || undefined,
       args.includes("--allow-controls"),
     )
+  } else if (args[0] === "--configure-replay") {
+    configureReplay(
+      args.includes("--allow-replay"),
+      args.filter((arg) => arg.startsWith("--origin=")).map((arg) => arg.slice(9)),
+    )
+    console.log("Replay permission updated. Capture-control permissions are unchanged.")
   } else if (args[0] === "--uninstall") uninstallIntegration()
   else if (args[0]?.startsWith("chrome-extension://")) startNativeHost(args[0])
   else throw new Error("Use --mcp, or run the integration installer.")

@@ -9,11 +9,24 @@ export const MCP_NAME = "api-network-recorder"
 export const VERSION = "0.4.4"
 export const extensionIdSchema = z.string().regex(/^[a-p]{32}$/)
 export const profileIdSchema = z.string().uuid()
+export const replayOriginSchema = z
+  .string()
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return ["http:", "https:"].includes(url.protocol) && url.origin === value
+    } catch {
+      return false
+    }
+  }, "Use an exact HTTP(S) origin, without path, credentials, query or trailing slash")
 export const configSchema = z
   .object({
     token: z.string().regex(/^[a-f0-9]{64}$/),
     extensionIds: z.array(extensionIdSchema).min(1),
     allowControls: z.boolean(),
+    allowReplay: z.boolean().default(false),
+    replayOrigins: z.array(replayOriginSchema).max(50).default([]),
   })
   .strict()
 export type BridgeConfig = z.infer<typeof configSchema>

@@ -77,12 +77,12 @@ Database version 2 preserves existing records and backfills the list index durin
 3. Restart Codex once and keep Chrome open. The extension connects automatically
    within a minute; subsequent sessions require no manual server startup.
 
-| System | Package |
-| --- | --- |
-| Windows x64 | [Installer](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe) |
+| System              | Package                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Windows x64         | [Installer](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-windows-x64-setup.exe)  |
 | macOS Apple Silicon | [ARM64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-arm64.tar.gz) |
-| macOS Intel | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-x64.tar.gz) |
-| Linux x64 (glibc) | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-x64.tar.gz) |
+| macOS Intel         | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-macos-x64.tar.gz)     |
+| Linux x64 (glibc)   | [x64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-x64.tar.gz)     |
 | Linux ARM64 (glibc) | [ARM64 archive](https://github.com/jlozoya/api-network-recorder/releases/latest/download/api-network-recorder-linux-arm64.tar.gz) |
 
 Each archive contains `install.sh`, `uninstall.sh`, a standalone bridge and license notices.
@@ -122,6 +122,65 @@ When several Chrome profiles are connected, the agent selects a `profileId`.
 Reads return captured data, including truncation and unavailable-body metadata.
 They do not replay requests. Treat captured content as untrusted data.
 
+### HTTP replay through MCP
+
+The native bridge also provides `prepare_replay`, `replay_request`, `get_replay`,
+and `list_replays`. These work through MCP or the bundled terminal client.
+
+Replay is disabled by default, independently of capture controls. After updating
+the native bridge, configure exact permitted origins using its executable:
+
+```powershell
+& "$env:LOCALAPPDATA/ApiNetworkRecorder/api-network-recorder-bridge.exe" --configure-replay --allow-replay --origin=https://example.test
+```
+
+On macOS/Linux use the installed bridge path from the table below with the same
+arguments. Repeat `--origin=...` for multiple origins. Origins have no paths or
+trailing slash. `--configure-replay` without `--allow-replay` revokes replay access.
+Reinstallation resets replay permission; configure it explicitly again after an
+upgrade. Current MCP processes check revocation on every send.
+
+1. Pin or save the source and authentication captures. Call `list_profiles` and
+   select an explicit `profileId`.
+2. Call `prepare_replay`, for example:
+
+```json
+{
+  "profileId": "11111111-1111-4111-8111-111111111111",
+  "request": { "id": "captured-source-id" },
+  "authentication": {
+    "mode": "captured",
+    "request": { "id": "captured-limited-account-id" },
+    "headerNames": ["cookie", "x-csrf-token"]
+  },
+  "body": "{\"price\":101}"
+}
+```
+
+3. Inspect the preview, then call `replay_request` with the identical input plus
+   `expectedRequestHash` set to the preview's `requestHash`. Changed content or
+   credentials require a new preview. Use `authentication: {"mode":"none"}` for
+   anonymous requests. Capture references can include `sessionId`.
+4. The result contains response status/body, timing, provenance and comparison
+   against the source response. Retrieve it later with `get_replay: {"id":"..."}`;
+   `list_replays` lists up to 50 retained results. History is stored in `replays/`
+   under the native integration directory, independently of Chrome retention.
+
+Replay uses the selected captured credential headers, not the browser's current
+cookie jar. It strips recognized credential headers from the source request and
+uses only the explicitly selected authentication headers. Custom credential
+header names must be selected explicitly. Tokens embedded in bodies or URLs are
+not automatically replaced or redacted. Auth header values and Set-Cookie values
+are redacted in previews/history; bodies and URLs can still contain secrets.
+
+Only the source request's origin is supported; redirects are returned without
+following them. TLS verification stays enabled. Transport headers are regenerated,
+GET/HEAD bodies are rejected, and incomplete or binary/multipart captures require
+an explicit replacement body. Defaults: 10 s timeout (maximum 20 s), 1 MiB
+request/decoded response limit. Truncated responses are marked. There are no
+automatic retries; after a transport error, a mutation may already have taken
+effect. Inspect API/GraphQL errors and verify actual state changes.
+
 The **AI access** page offers connection status, **Disconnect integration**, and
 **Connect integration**. The button opens this page; it does not have to remain
 open for MCP access. Remove the integration through Windows Installed Apps or run
@@ -134,11 +193,11 @@ Firefox retains its capture controls; the MCP integration uses Chrome. To config
 another MCP client such as Claude, use the installed executable with the argument
 `--mcp`; automatic client configuration currently targets Codex.
 
-| System | Installed executable |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%/ApiNetworkRecorder/api-network-recorder-bridge.exe` |
-| macOS | `~/Library/Application Support/ApiNetworkRecorder/api-network-recorder-bridge` |
-| Linux | `~/.local/share/api-network-recorder/api-network-recorder-bridge` (or under `XDG_DATA_HOME`) |
+| System  | Installed executable                                                                         |
+| ------- | -------------------------------------------------------------------------------------------- |
+| Windows | `%LOCALAPPDATA%/ApiNetworkRecorder/api-network-recorder-bridge.exe`                          |
+| macOS   | `~/Library/Application Support/ApiNetworkRecorder/api-network-recorder-bridge`               |
+| Linux   | `~/.local/share/api-network-recorder/api-network-recorder-bridge` (or under `XDG_DATA_HOME`) |
 
 `CODEX_HOME` changes the Codex configuration/skill directory. `API_RECORDER_HOME`
 can override the bridge directory, but must be set consistently for the installer,

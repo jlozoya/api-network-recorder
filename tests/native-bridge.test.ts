@@ -1,5 +1,13 @@
 import { test, expect } from "bun:test"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs"
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  renameSync,
+  unlinkSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { randomBytes, randomUUID } from "node:crypto"
@@ -155,6 +163,19 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
   const hosts: ReturnType<typeof spawn>[] = []
   const clients: Client[] = []
   let forwarded = 0
+  let replayCount = 0
+  const replayServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      replayCount++
+      expect(request.headers.get("cookie")).toBe("account=limited-fixture")
+      expect(request.headers.get("x-csrf-token")).toBe("limited-csrf-fixture")
+      expect(await request.json()).toEqual({ price: 101 })
+      return Response.json({ permitted: false }, { status: 403 })
+    },
+  })
+  const replayOrigin = replayServer.url.origin
   const host = async (profileId: string) => {
     const program = launch([`chrome-extension://${extensionId}/`])
     const child = spawn(program.command, program.args, {
@@ -175,17 +196,56 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
         if (message.type === "call") {
           forwarded++
           const result =
-            message.method === "get_request"
+            message.method === "get_request" && message.args.id.startsWith("replay-")
               ? {
                   id: message.args.id,
+                  source: "debugger",
+                  tabId: 1,
+                  pageUrl: replayOrigin,
+                  origin: replayOrigin,
+                  url: replayOrigin + "/api",
+                  method: "POST",
+                  requestHeaders: {
+                    "content-type": "application/json",
+                    cookie:
+                      message.args.id === "replay-source"
+                        ? "account=owner-fixture"
+                        : "account=limited-fixture",
+                    "x-csrf-token":
+                      message.args.id === "replay-source"
+                        ? "owner-csrf-fixture"
+                        : "limited-csrf-fixture",
+                  },
+                  requestBody: {
+                    kind: "json",
+                    value: { price: 100 },
+                    sizeBytes: 13,
+                    truncated: false,
+                  },
+                  status: 200,
+                  statusText: "OK",
+                  responseHeaders: {},
                   responseBody: {
                     kind: "json",
-                    value: { synthetic: "México 🧪" },
+                    value: { permitted: true },
+                    sizeBytes: 18,
                     truncated: false,
-                    sizeBytes: 42,
                   },
+                  startedAt: "2026-10-01T00:00:00.000Z",
+                  completedAt: "2026-10-01T00:00:01.000Z",
+                  durationMs: 1000,
                 }
-              : { profileId, method: message.method, args: message.args }
+              : message.method === "get_request"
+                ? {
+                    id: message.args.id,
+                    responseBody: {
+                      kind: "json",
+                      value: { synthetic: "México 🧪" },
+                      truncated: false,
+                      sizeBytes: 42,
+                    },
+                  }
+                : { profileId, method: message.method, args: message.args }
           child.stdin!.write(encodeFrame({ type: "result", id: message.id, result }))
         }
       },
@@ -214,6 +274,12 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
     const client = await mcp()
     const list = await client.listTools()
     expect(list.tools.some((tool) => tool.name === "search_requests")).toBe(true)
+    expect(list.tools.find((tool) => tool.name === "replay_request")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+      idempotentHint: false,
+    })
     const responses = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>
         client.callTool({ name: "get_request", arguments: { id: String(i) } }),
@@ -264,6 +330,9 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       expect(read.code).toBe(0)
       expect(read.result.id).toBe("skill-México-🧪")
       expect(read.result.responseBody.value.synthetic).toBe("México 🧪")
+      const replayHistory = await invokeSkill("list_replays", {})
+      expect(replayHistory.code).toBe(0)
+      expect(replayHistory.result.replays).toEqual([])
       const denied = await invokeSkill("start_recording", {})
       expect(denied.code).toBe(1)
       expect(denied.result.error).toContain("permission")
@@ -286,6 +355,92 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
       expect(denied.code).toBe(1)
       expect(denied.result.error).toContain("permission")
     }
+    const replayArgs = {
+      profileId: firstId,
+      request: { id: "replay-source" },
+      authentication: {
+        mode: "captured",
+        request: { id: "replay-auth" },
+        headerNames: ["cookie", "x-csrf-token"],
+      },
+      body: '{"price":101}',
+    }
+    const preview = body(await client.callTool({ name: "prepare_replay", arguments: replayArgs }))
+    expect(preview.replayAllowed).toBe(false)
+    expect(preview.headers.cookie).toBe("[REDACTED]")
+    const sendArgs = { ...replayArgs, expectedRequestHash: preview.requestHash }
+    expect((await client.callTool({ name: "replay_request", arguments: sendArgs })).isError).toBe(
+      true,
+    )
+    expect(replayCount).toBe(0)
+    // Replay is a separate grant; capture controls stay disabled.
+    writeFileSync(
+      join(home, "bridge.json"),
+      JSON.stringify({
+        token,
+        extensionIds: [extensionId],
+        allowControls: false,
+        allowReplay: true,
+        replayOrigins: ["https://other.test"],
+      }),
+    )
+    expect((await client.callTool({ name: "replay_request", arguments: sendArgs })).isError).toBe(
+      true,
+    )
+    expect(replayCount).toBe(0)
+    writeFileSync(
+      join(home, "bridge.json"),
+      JSON.stringify({
+        token,
+        extensionIds: [extensionId],
+        allowControls: false,
+        allowReplay: true,
+        replayOrigins: [replayOrigin],
+      }),
+    )
+    expect(
+      (
+        await client.callTool({
+          name: "replay_request",
+          arguments: { ...sendArgs, body: '{"price":999}' },
+        })
+      ).isError,
+    ).toBe(true)
+    expect(replayCount).toBe(0)
+    const sent = await client.callTool({ name: "replay_request", arguments: sendArgs })
+    expect(sent.isError).not.toBe(true)
+    const replay = body(sent)
+    expect(replay.record.status).toBe(403)
+    expect(replayCount).toBe(1)
+    expect(JSON.stringify(replay)).not.toContain("owner-fixture")
+    expect(JSON.stringify(replay)).not.toContain("limited-fixture")
+    expect(
+      body(await client.callTool({ name: "get_replay", arguments: { id: replay.id } })),
+    ).toEqual(replay)
+    expect(body(await client.callTool({ name: "list_replays", arguments: {} })).replays[0].id).toBe(
+      replay.id,
+    )
+    renameSync(join(home, "replays"), join(home, "saved-replays"))
+    writeFileSync(join(home, "replays"), "synthetic storage failure")
+    const unsaved = body(await client.callTool({ name: "replay_request", arguments: sendArgs }))
+    expect(unsaved.record.status).toBe(403)
+    expect(unsaved.historySaved).toBe(false)
+    expect(unsaved.historyWarning).toContain("Do not resend")
+    expect(replayCount).toBe(2)
+    unlinkSync(join(home, "replays"))
+    renameSync(join(home, "saved-replays"), join(home, "replays"))
+    writeFileSync(
+      join(home, "bridge.json"),
+      JSON.stringify({
+        token,
+        extensionIds: [extensionId],
+        allowControls: false,
+      }),
+    )
+    expect((await client.callTool({ name: "replay_request", arguments: sendArgs })).isError).toBe(
+      true,
+    )
+    expect(replayCount).toBe(2)
     const count = forwarded
     const denied = await client.callTool({ name: "start_recording", arguments: {} })
     expect(denied.isError).toBe(true)
@@ -372,6 +527,7 @@ test("MCP stdio routes concurrent calls through authenticated native IPC and iso
         .isError,
     ).toBe(true)
   } finally {
+    await replayServer.stop(true)
     for (const client of clients) await client.close()
     for (const child of hosts) {
       child.stdin?.end()
