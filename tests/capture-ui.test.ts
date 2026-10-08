@@ -30,7 +30,7 @@ const bundle = (entry: string) => {
                   contents:
                     path === "styles"
                       ? ""
-                      : "export const listNetworkRecords = async () => []; export const listNetworkRecordPreviews = (...args) => globalThis.testListRecords(...args); export const getNetworkRecordsByIds = async () => []; export const listSavedSessions = async () => []; export const saveSession = async () => {}; export const deleteSavedSession = async () => {}; export const setNetworkRecordPinned = async () => {}; export const clearNetworkRecords = async () => {};",
+                      : "export const listNetworkRecords = async () => []; export const listNetworkRecordPreviews = (...args) => globalThis.testListRecords(...args); export const getNetworkRecordsByIds = async () => []; export const listSavedSessions = async () => []; export const saveSession = async () => {}; export const deleteSavedSession = async () => {}; export const deleteNetworkRecord = async () => {}; export const setNetworkRecordPinned = async () => {}; export const clearNetworkRecords = async () => {};",
                 }))
               },
             },

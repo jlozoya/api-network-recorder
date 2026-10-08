@@ -124,6 +124,22 @@ export const migrationAndRetention = async () => {
   }
   check((await db.count("sessions")) === before, "Failed snapshot committed metadata")
   check((await db.count("sessionRecords")) === 2, "Failed snapshot left orphan records")
+  const otherSession = await repository.saveSession("Independent copy", ["legacy"])
+  await repository.deleteNetworkRecord("legacy", session.id)
+  check(!(await db.get("sessionRecords", [session.id, "legacy"])), "Session body was not deleted")
+  check(!(await db.get("sessionPreviews", [session.id, "legacy"])), "Session preview was not deleted")
+  check((await db.get("sessions", session.id))?.count === 1, "Session count was not updated")
+  await repository.deleteNetworkRecord("legacy", session.id)
+  check((await db.get("sessions", session.id))?.count === 1, "Repeated deletion changed the count")
+  check(await db.get("networkRecords", "legacy"), "Session deletion removed the live record")
+  check(await db.get("sessionRecords", [otherSession.id, "legacy"]), "Another snapshot was modified")
+  await repository.deleteNetworkRecord("legacy")
+  check(!(await db.get("networkRecords", "legacy")), "Pinned body was not deleted")
+  check(!(await db.get("recordPreviews", "legacy")), "Pinned preview was not deleted")
+  check(await db.get("sessionRecords", [otherSession.id, "legacy"]), "Live deletion removed a snapshot")
+  await repository.deleteNetworkRecord("legacy", otherSession.id)
+  check((await db.get("sessions", otherSession.id))?.count === 0, "Last deletion did not empty the session")
+  await repository.deleteSavedSession(otherSession.id)
   await repository.deleteSavedSession(session.id)
   check(
     (await db.count("sessionRecords")) === 0 && (await db.count("sessionPreviews")) === 0,

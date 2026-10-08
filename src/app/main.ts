@@ -16,6 +16,7 @@ import {
 import { resetDb } from "../storage/db.js"
 import {
   clearNetworkRecords,
+  deleteNetworkRecord,
   listNetworkRecordPreviews,
   getNetworkRecordsByIds,
   listSavedSessions,
@@ -752,6 +753,7 @@ const renderRequestList = (): string => {
           <div class="recordActions">
             <button class="recordAction recordCopyUrl" type="button" data-record-id="${escapeHtml(record.id)}" ${tooltipAttributes("Copy URL", "Copy the full request URL, including query parameters.")} aria-label="Copy URL">${icon("copy")}</button>
             ${!state.sessionId ? `<button class="recordAction recordPin" type="button" data-record-id="${escapeHtml(record.id)}" ${tooltipAttributes(record.pinned ? "Unpin" : "Pin", record.pinned ? "Allow this request to be removed by the capture limit or Clear unpinned." : "Keep this request when the capture limit is reached or unpinned requests are cleared.")} aria-label="${record.pinned ? "Unpin" : "Pin"}" aria-pressed="${record.pinned}">${icon("pin")}</button>` : ""}
+            <button class="recordAction recordDelete" type="button" data-record-id="${escapeHtml(record.id)}" ${tooltipAttributes("Delete request", state.sessionId ? "Delete this request from the saved session." : "Delete this request from live capture, even if it is pinned.")} aria-label="Delete request">${icon("trash")}</button>
           </div>
           <div class="recordMeta">
             <strong>${escapeHtml(record.method)}</strong>
@@ -1249,6 +1251,31 @@ const bindEvents = (): void => {
           await setNetworkRecordPinned(record.id, !record.pinned)
           await reload({ silent: true })
         })
+    })
+  })
+  unboundControls.querySelectorAll<HTMLButtonElement>(".recordDelete").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation()
+      const id = button.dataset.recordId
+      const sessionId = state.sessionId
+      if (!id) return
+      void runAction(event, async () => {
+        await deleteNetworkRecord(id, sessionId || undefined)
+        if (sessionId === state.sessionId) {
+          // Discard pending reads that could restore the deleted record or its details.
+          reloadGeneration++
+          detailGeneration++
+          state.records = state.records.filter((record) => record.id !== id)
+          details.delete(id)
+          if (state.selectedRecordId === id) state.selectedRecordId = null
+          if (compareBaseline?.id === id) compareBaseline = null
+          detailError = null
+          detailLoading = false
+          render({ preservePanelScroll: true })
+          if (state.selectedRecordId) void loadSelectedDetails({ renderInitial: false })
+        }
+        await reload({ silent: true })
+      })
     })
   })
   unboundControls.querySelector("#setBaseline")?.addEventListener("click", () => {

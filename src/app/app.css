@@ -337,11 +337,11 @@ button[data-active="true"]:not(.danger):hover {
 }
 
 .record:has(.recordActions) .recordMeta {
-  padding-right: 32px;
+  padding-right: 64px;
 }
 
 .record:has(.recordPin) .recordMeta {
-  padding-right: 64px;
+  padding-right: 96px;
 }
 
 .recordActions {
@@ -378,6 +378,12 @@ button[data-active="true"]:not(.danger):hover {
 .recordPin[aria-pressed="true"] {
   color: #5eead4;
   background: #134e4a;
+}
+
+.recordDelete:hover,
+.recordDelete:focus-visible {
+  color: #fca5a5;
+  background: #450a0a;
 }
 
 .recordMeta {

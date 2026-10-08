@@ -62,6 +62,7 @@ Firefox builds use:
 - **Copy cURL** supports Bash and PowerShell 7.3+. Multipart fields use literal form values with a fresh boundary. Captured file names do not include file contents. Bash exports containing Unicode use a UTF-8 heredoc to avoid Git for Windows argument recoding.
 - **Tab status** shows connected, pending, excluded, failed, unsupported, and ineligible tabs. It refreshes while the dialog is open.
 - **Pin request** keeps a live request outside the rolling retention limit. **Clear unpinned** preserves pins; unpin a request to return it to normal retention.
+- The trash icon on each request deletes that record, including pinned records. In a saved session, it deletes only that session's copy and updates its request count.
 - Enter a session name and choose **Save visible requests** to snapshot the currently filtered list, including bodies. Use the Session selector to reopen it. Saved sessions survive automatic trimming and clearing live records; delete them explicitly when no longer needed.
 - Choose **Use as comparison A**, select another request, then **Compare A → this request**. Comparison includes headers, repeated query parameters, bodies, status and errors. A can come from another saved session. The panel displays at most 1,000 differences.
 

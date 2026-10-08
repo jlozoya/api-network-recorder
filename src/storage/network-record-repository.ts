@@ -249,6 +249,28 @@ export const listNetworkRecords = async (
   })
 }
 
+export const deleteNetworkRecord = async (id: string, sessionId?: string): Promise<void> => {
+  const db = await getDb()
+  if (sessionId) {
+    const tx = db.transaction(["sessions", "sessionRecords", "sessionPreviews"], "readwrite")
+    const records = tx.objectStore("sessionRecords")
+    const existing = await records.get([sessionId, id])
+    await records.delete([sessionId, id])
+    await tx.objectStore("sessionPreviews").delete([sessionId, id])
+    if (existing) {
+      const session = await tx.objectStore("sessions").get(sessionId)
+      if (session)
+        await tx.objectStore("sessions").put({ ...session, count: Math.max(0, session.count - 1) })
+    }
+    await tx.done
+    return
+  }
+  const tx = db.transaction(["networkRecords", "recordPreviews"], "readwrite")
+  await tx.objectStore("networkRecords").delete(id)
+  await tx.objectStore("recordPreviews").delete(id)
+  await tx.done
+}
+
 export const clearNetworkRecords = async (): Promise<void> => {
   const db = await getDb()
   const transaction = db.transaction(["networkRecords", "recordPreviews"], "readwrite")

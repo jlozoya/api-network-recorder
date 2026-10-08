@@ -381,10 +381,10 @@ try {
       delete globalThis.__originalSendMessage;
     `)
   }
-  await evaluate('document.querySelector("#pinRequest").click()')
+  await evaluate('document.querySelector(\'[data-id="ui-a"] .recordPin\').click()')
   await waitFor(
-    () => evaluate('document.querySelector("#pinRequest")?.textContent'),
-    (text) => text === "Unpin request",
+    () => evaluate('document.querySelector(\'[data-id="ui-a"] .recordPin\')?.getAttribute("aria-pressed")'),
+    (pressed) => pressed === "true",
     "Pinned request",
   )
   await evaluate(
@@ -442,6 +442,20 @@ try {
     "Tab diagnostics",
   )
   await evaluate('document.querySelector("dialog").close()')
+
+  await evaluate('document.querySelector(\'[data-id="ui-b"] .recordDelete\').click()')
+  await waitFor(
+    () => evaluate('document.querySelectorAll(".record[data-id]").length'),
+    (count) => count === 2,
+    "Delete a saved request",
+  )
+  assert.equal(await evaluate('Boolean(document.querySelector(".record.selected"))'), false)
+  assert(!(await evaluate('document.querySelector(".details").textContent.includes("ui-b")')))
+  await waitFor(
+    () => evaluate('document.querySelector("#sessionSelect option:checked")?.textContent'),
+    (text) => text.includes("(2)"),
+    "Saved session count after deletion",
+  )
 
   await evaluate(
     '(() => { const liveSessionSelect = document.querySelector("#sessionSelect"); liveSessionSelect.value = ""; liveSessionSelect.dispatchEvent(new Event("change")) })()',
@@ -642,11 +656,33 @@ try {
   assert.equal(selectedAfterRefresh.smoothCalls, 1, "Selection disabled the smooth refresh animation")
   assert(selectedAfterRefresh.details.includes(selectedAtTop), "Selected request lost its details")
   // The test bundle is removed below; production releases contain only the built extension.
+  await command("Emulation.setDeviceMetricsOverride", { width: 1100, height: 1000, deviceScaleFactor: 1, mobile: false })
   await evaluate(
     "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
   )
   const screenshot = await command("Page.captureScreenshot", { format: "png" })
   await writeFile(resolve("dist/inspector-smoke.png"), Buffer.from(screenshot.data, "base64"))
+  await evaluate('document.querySelector(".record.selected .recordDelete").click()')
+  await waitFor(
+    () => evaluate('Boolean(document.querySelector(".record.selected"))'),
+    (selected) => !selected,
+    "Delete the retained selection",
+  )
+  await evaluate('document.querySelector(\'[data-id="ui-a"] .recordDelete\').click()')
+  await waitFor(
+    () => evaluate('Boolean(document.querySelector(\'[data-id="ui-a"]\'))'),
+    (present) => !present,
+    "Delete a pinned live request",
+  )
+  await evaluate('document.querySelector("#refresh").click()')
+  await waitFor(
+    () => evaluate('Boolean(document.querySelector("#refresh"))'),
+    Boolean,
+    "Refresh after deletion",
+  )
+  assert.equal(await evaluate('Boolean(document.querySelector(\'[data-id="ui-a"]\'))'), false)
+  assert.equal(await evaluate('Boolean(document.querySelector(\'[data-id="' + selectedAtTop + '"]\'))'), false)
+  console.log("PASS: individual deletion removes pinned live requests, retained selections and saved requests; session counts update and refresh does not restore deleted records.")
   console.log(
     "PASS: v1 migration; metadata lists; pinned retention; atomic snapshots; body search; lazy inspector details; comparison; session reopen; per-origin export; tab diagnostics; stable list and detail nodes; native smooth scrolling; animated new records; selection retention.",
   )

@@ -45,7 +45,7 @@ await run(process.execPath, [
     ? [
         "--windows-hide-console",
         "--windows-title=API Network Recorder AI Integration",
-        "--windows-version=0.4.5.0",
+        "--windows-version=0.4.6.0",
       ]
     : []),
   "native/main.ts",
